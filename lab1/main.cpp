@@ -1,20 +1,16 @@
-#include <cstdint>
-#include <iterator>
-#include <ranges>
+#include <algorithm>
+#include <cerrno>
 #include <string>
-#include <sys/stat.h>
 #include <vector>
-#include <random>
-#include <limits>
-
-#include <thread>
-#include <barrier>
-
+#include <array>
 #include <chrono>
+#include <thread>
 
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <string.h>
+#include <pthread.h>
 
 #define MY_STRINGIFY_IMPL(...) #__VA_ARGS__
 #define MY_S(...) MY_STRINGIFY_IMPL(__VA_ARGS__)
@@ -74,6 +70,20 @@ struct defer_t {
 
 #define MY_ARRAY_COUNT(arr) (sizeof(arr) / sizeof(arr[0]))
 
+#define MY_PTHREAD_BARRIER_WAIT(barrier)\
+    do {\
+        switch(pthread_barrier_wait(barrier)) {\
+            case 0:\
+            case PTHREAD_BARRIER_SERIAL_THREAD: {\
+                break;\
+            }\
+            default: {\
+                MY_ASSERT(false);\
+                break;\
+            }\
+        }\
+    } while(0)
+
 template<typename T>
 static std::chrono::system_clock::duration timeit(T&& func) {
     const auto start = std::chrono::system_clock::now();
@@ -111,7 +121,7 @@ struct Xoroshiro128PP {
     }
 
     double next_double() {
-        return (next() >> 11) * 0x1.0p-53;
+        return (next() >> 11) * (1.0 / 9007199254740992.0);
     }
 };
 
@@ -129,23 +139,35 @@ static uint64_t count_points(const uint64_t points_count) {
     return points_inside_circle_count;
 }
 
+template<int I, int N, class F>
+constexpr void static_for(F f) {
+  if constexpr (I < N) {
+    f.template operator()<I>();
+    static_for<I + 1, N>(f);
+  }
+}
+
 int main() {
-    constexpr uint64_t points_per_thread_min = 10000;
-    constexpr uint64_t points_per_thread_max = 1000000;
-    constexpr uint64_t points_per_thread_step = 10000;
+    static constexpr uint64_t points_per_thread_min = 1'000'000;
+    static constexpr uint64_t points_per_thread_max = 10'000'000;
+    static constexpr uint64_t points_per_thread_step = 1'000'000;
+    static constexpr size_t cpus_count = 12;
+
+    MY_ASSERT(sysconf(_SC_NPROCESSORS_ONLN) == static_cast<long>(cpus_count));
+
     {
-        std::vector<std::thread> threads(std::thread::hardware_concurrency());
-        for(auto& t : threads) {
-            t = std::thread([]() { count_points(1000000); });
+        std::vector<std::thread> threads(cpus_count);
+        for(auto& thread : threads) {
+            thread = std::thread([]() { count_points(1000000); });
         }
-        for(auto& t : threads) {
-            t.join();
+        for(auto& thread : threads) {
+            thread.join();
         }
     }
     {
         std::vector<uint64_t> points_counts{};
         for(auto points_per_thread = points_per_thread_min; points_per_thread <= points_per_thread_max; points_per_thread += points_per_thread_step) {
-            for(uint64_t threads_count = 1; threads_count <= static_cast<uint64_t>(std::thread::hardware_concurrency()); ++threads_count) {
+            for(uint64_t threads_count = 1; threads_count <= static_cast<uint64_t>(cpus_count); ++threads_count) {
                 points_counts.push_back(threads_count * points_per_thread);
             }
         }
@@ -165,7 +187,7 @@ int main() {
             });
             const auto s = std::to_string(points_count) + "," + std::to_string(dur.count()) + "," + std::to_string(points_circle_count) + "\n";
             MY_ASSERT_NOT_LESS_ZERO(write(fd, s.c_str(), s.length()));
-            MY_ASSERT_NOT_LESS_ZERO(fsync(fd));
+            // MY_ASSERT_NOT_LESS_ZERO(fsync(fd));
         }
     }
     {
@@ -176,31 +198,37 @@ int main() {
         constexpr std::string_view header = "points_per_thread,threads_count,nanoseconds\n";
         MY_ASSERT_NOT_LESS_ZERO(write(fd, header.data(), header.length()));
         for(uint64_t points_per_thread = points_per_thread_min; points_per_thread <= points_per_thread_max; points_per_thread += points_per_thread_step) {
-            for(uint64_t threads_count = 1; threads_count <= static_cast<uint64_t>(std::thread::hardware_concurrency()); ++threads_count) {
-                std::vector<std::thread> threads(threads_count);
-                for(auto& t : threads) {
-                    t = std::thread([&sync_point]() {
-                        sync_point.arrive_and_wait();
-                    })
-                }
+            static_for<1, cpus_count>([points_per_thread, fd]<int threads_count>() {
+                pthread_barrier_t barrier{};
+                MY_ASSERT_NOT_LESS_ZERO(pthread_barrier_init(&barrier, nullptr, threads_count + 1));
+                defer(MY_ASSERT_NOT_LESS_ZERO(pthread_barrier_destroy(&barrier)));
 
+                static constexpr size_t samples_count = 10;
+                std::array<std::thread, threads_count> threads{};
 
-                MY_FOR_RANGE_ZERO(sample_index, 10) {
-                    const auto dur = timeit([&threads, points_per_thread]() {
-                        for(auto& t : threads) {
-                            t = std::thread([points_per_thread]() { count_points(points_per_thread); });
-                        }
-                        for(auto& t : threads) {
-                            t.join();
+                for(std::thread& t : threads) {
+                    t = std::thread([&barrier, points_per_thread]() {
+                        MY_FOR_RANGE_ZERO(sample_index, samples_count) {
+                            MY_PTHREAD_BARRIER_WAIT(&barrier);
+                            count_points(points_per_thread);
+                            MY_PTHREAD_BARRIER_WAIT(&barrier);
                         }
                     });
-                    MY_ASSERT_NOT_LESS_ZERO(fsync(fd));
-                    static_assert(std::is_same_v<std::remove_cv_t<decltype(dur)>, std::chrono::nanoseconds>);
+                }
+                defer(for(auto& t : threads) t.join());
+
+                MY_FOR_RANGE_ZERO(sample_index, samples_count) {
+                    const auto dur = timeit([&barrier]() {
+                        MY_PTHREAD_BARRIER_WAIT(&barrier);
+                        MY_PTHREAD_BARRIER_WAIT(&barrier);
+                    });
+                    static_assert(std::is_same<std::remove_cv_t<decltype(dur)>, std::chrono::nanoseconds>::value, "");
                     const auto s = std::to_string(points_per_thread) + "," + std::to_string(threads_count) + "," + std::to_string(dur.count()) + "\n";
                     MY_ASSERT_NOT_LESS_ZERO(write(fd, s.c_str(), s.length()));
-                    MY_ASSERT_NOT_LESS_ZERO(fsync(fd));
+                    // MY_ASSERT_NOT_LESS_ZERO(fsync(fd));
+                    // printf("%s", s.data());
                 }
-            }
+            });
         }
     }
 }
