@@ -1,12 +1,11 @@
 #include <algorithm>
-#include <cerrno>
 #include <numeric>
 #include <string>
-#include <tuple>
 #include <vector>
 #include <array>
 #include <chrono>
 #include <thread>
+#include <numbers>
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -141,14 +140,13 @@ static uint64_t count_points(const uint64_t points_count) {
     return points_inside_circle_count;
 }
 
-template<int I, int N, class F>
-constexpr void static_for(F f) {
-  if constexpr (I < N) {
-    f.template operator()<I>();
-    static_for<I + 1, N>(f);
-  }
-}
-
+// template<int I, int N, class F>
+// constexpr void static_for(F f) {
+//   if constexpr (I < N) {
+//     f.template operator()<I>();
+//     static_for<I + 1, N>(f);
+//   }
+// }
 
 static constexpr uint64_t points_per_thread_min = 1'000'000;
 static constexpr uint64_t points_per_thread_max = 10'000'000;
@@ -160,7 +158,7 @@ int main() {
     {
         std::vector<std::thread> threads(cpus_count);
         for(auto& thread : threads) {
-            thread = std::thread([]() { count_points(1000000); });
+            thread = std::thread([]() { count_points(1'000'000); });
         }
         for(auto& thread : threads) {
             thread.join();
@@ -188,22 +186,12 @@ int main() {
             MY_FOR_RANGE_ZERO(sample_index, samples_count) {
                 uint64_t points_circle_count = 0;
                 const auto dur = timeit(
-                    [
-                        points_count
-// #define CHECK_RESULT
-#ifdef CHECK_RESULT
-                        , &points_circle_count
-#endif
-                    ]() {
-#ifdef CHECK_RESULT
-                        points_circle_count =
-#endif
-                        count_points(points_count);
+                    [points_count, &points_circle_count]() {
+                        points_circle_count = count_points(points_count);
                     });
-#ifdef CHECK_RESULT
                 const double pi = 4.0 * static_cast<double>(points_circle_count) / static_cast<double>(points_count);
-                MY_LOG_DEBUG("pi: %lf", pi);
-#endif
+                MY_ASSERT(std::abs(pi - std::numbers::pi) < 0.01);
+
                 const auto s = std::to_string(points_count) + "," + std::to_string(dur.count()) + "\n";
                 MY_ASSERT_NOT_LESS_ZERO(write(fd, s.c_str(), s.length()));
                 // MY_ASSERT_NOT_LESS_ZERO(fsync(fd));
@@ -224,23 +212,14 @@ int main() {
                 defer(MY_ASSERT_NOT_LESS_ZERO(pthread_barrier_destroy(&barrier)));
 
                 std::vector<std::thread> threads(threads_count);
-#ifdef CHECK_RESULT
                 std::vector<uint64_t> points_circle_counts(threads_count);
-#endif
+
                 MY_FOR_RANGE_ZERO(thread_index, threads_count) {
                     threads[thread_index] = std::thread(
-                        [
-                            &barrier, points_per_thread
-#ifdef CHECK_RESULT
-                            , &points_circle_counts, thread_index
-#endif
-                        ]() {
+                        [ &barrier, points_per_thread , &points_circle_counts, thread_index]() {
                             MY_FOR_RANGE_ZERO(sample_index, samples_count) {
                                 MY_PTHREAD_BARRIER_WAIT(&barrier);
-#ifdef CHECK_RESULT
-                                points_circle_counts[thread_index] = 
-#endif
-                                count_points(points_per_thread);
+                                points_circle_counts[thread_index] = count_points(points_per_thread);
                                 MY_PTHREAD_BARRIER_WAIT(&barrier);
                             }
                         }
@@ -250,18 +229,11 @@ int main() {
 
                 MY_FOR_RANGE_ZERO(sample_index, samples_count) {
                     const auto dur = timeit(
-                        [
-                            &barrier
-#ifdef CHECK_RESULT
-                            ,&points_circle_counts, points_per_thread, threads_count
-#endif
-                        ]() {
+                        [&barrier ,&points_circle_counts, points_per_thread, threads_count]() {
                             MY_PTHREAD_BARRIER_WAIT(&barrier);
                             MY_PTHREAD_BARRIER_WAIT(&barrier);
-#ifdef CHECK_RESULT
                             const double pi = 4.0 * static_cast<double>(std::accumulate(std::begin(points_circle_counts), std::end(points_circle_counts), 0)) / static_cast<double>(points_per_thread * threads_count);
-                            MY_LOG_DEBUG("pi: %lf", pi);
-#endif
+                            MY_ASSERT(std::abs(pi - std::numbers::pi) < 0.01);
                         }
                     );
                     static_assert(std::is_same<std::remove_cv_t<decltype(dur)>, std::chrono::nanoseconds>::value, "");
