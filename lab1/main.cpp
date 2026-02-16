@@ -1,11 +1,17 @@
-#include <numeric>
+#include <cstdint>
+#include <iterator>
+#include <ranges>
+#include <string>
+#include <sys/stat.h>
 #include <vector>
-#include <array>
 #include <random>
-#include <cstdio>
 #include <limits>
-#include <ctime>
 #include <thread>
+#include <chrono>
+
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
 
 #define MY_STRINGIFY_IMPL(...) #__VA_ARGS__
 #define MY_S(...) MY_STRINGIFY_IMPL(__VA_ARGS__)
@@ -54,20 +60,6 @@
         MY_LOG_DEBUG("`"#expr"`: `" format "`", (expr));\
     } while(0)
 
-#define MY_PRINT_EXPR_SIZE_T(expr) MY_PRINT_EXPR_IMPL(expr, "%lu")
-#define MY_PRINT_EXPR_UINT(expr) MY_PRINT_EXPR_IMPL(expr, "%u")
-#define MY_PRINT_EXPR_STRING(expr) MY_PRINT_EXPR_IMPL(expr, "%s")
-#define MY_ASSERT_GLFW(expr) MY_ASSERT((expr) == GLFW_TRUE)
-
-#define MY_ASSERT_VK(expr) MY_ASSERT((expr) == VK_SUCCESS)
-#define MY_PRINT_EXPR_IMPL(expr, format)\
-    do {\
-        MY_LOG_DEBUG("`"#expr"`: `" format "`", (expr));\
-    } while(0)
-
-#define MY_PRINT_EXPR_SIZE_T(expr) MY_PRINT_EXPR_IMPL(expr, "%lu")
-#define MY_PRINT_EXPR_UINT(expr) MY_PRINT_EXPR_IMPL(expr, "%u")
-#define MY_PRINT_EXPR_STRING(expr) MY_PRINT_EXPR_IMPL(expr, "%s")
 
 template <typename F>
 struct defer_t {
@@ -79,63 +71,95 @@ struct defer_t {
 
 #define MY_ARRAY_COUNT(arr) (sizeof(arr) / sizeof(arr[0]))
 
-static void single() {
-    static constexpr int64_t mid_point = std::numeric_limits<int>::max() / 2 + 1;
-    static constexpr int64_t max_dist = mid_point * mid_point;
+template<typename T>
+static std::chrono::system_clock::duration timeit(T&& func) {
+    const auto start = std::chrono::system_clock::now();
+    func();
+    return std::chrono::system_clock::now() - start;
+}
 
+static uint64_t count_points(const uint64_t points_count) {
     std::random_device random_device{};
     std::mt19937 gen(random_device());
     std::uniform_real_distribution<double> distrib(-1.0, 1.0);
-
-    const int points_count = 1000000;
-    int points_inside_circle_count = 0;
-    for(int i = 0; i < points_count; ++i) {
+    uint64_t points_inside_circle_count = 0;
+    MY_FOR_RANGE_ZERO(i, points_count) {
         const double x = distrib(gen);
         const double y = distrib(gen);
-        if ((x * x + y * y) <= 1.0) {
+        if((x * x + y * y) <= 1.0) {
             ++points_inside_circle_count;
         }
     }
-    const double pi = 4.0 * static_cast<double>(points_inside_circle_count) / points_count;
-    MY_LOG_DEBUG("PI: %lf", pi);
+    return points_inside_circle_count;
 }
-
-static void multi() {
-    static constexpr int64_t mid_point = std::numeric_limits<int>::max() / 2 + 1;
-    static constexpr int64_t max_dist = mid_point * mid_point;
-
-    constexpr size_t threads_count = 6;
-    constexpr size_t points_count_per_thread = 10000000;
-    constexpr size_t points_count = points_count_per_thread * threads_count;
-
-    std::array<std::thread, threads_count> threads{};
-    std::array<int, threads.size()> points_inside_circle_counts{};
-
-    MY_FOR_RANGE_ZERO(thread_index, threads_count) {
-        threads[thread_index] = std::thread([thread_index, &points_inside_circle_counts]() {
-            std::random_device random_device{};
-            std::mt19937 gen(random_device());
-            std::uniform_real_distribution<double> distrib(-1.0, 1.0);
-            int points_inside_circle_count = 0;
-            MY_FOR_RANGE_ZERO(point_index, points_count_per_thread) {
-                const double x = distrib(gen);
-                const double y = distrib(gen);
-                if ((x * x + y * y) <= 1.0) {
-                    ++points_inside_circle_count;
-                }
-            }
-            points_inside_circle_counts[thread_index] = points_inside_circle_count;
-        });
-    }
-    for(auto& t : threads) {
-        t.join();
-    }
-    const int points_inside_circle_count = std::accumulate(std::begin(points_inside_circle_counts), std::end(points_inside_circle_counts), 0);
-    const double pi = 4.0 * static_cast<double>(points_inside_circle_count) / static_cast<double>(points_count);
-    MY_LOG_DEBUG("PI: %lf", pi);
-}
+// const int points_inside_circle_count = std::accumulate(std::begin(points_inside_circle_counts), std::end(points_inside_circle_counts), 0);
+// const double pi = 4.0 * static_cast<double>(points_inside_circle_count) / static_cast<double>(points_count);
 
 int main() {
-    multi();
+    constexpr uint64_t points_per_thread_min = 10000;
+    constexpr uint64_t points_per_thread_max = 1000000;
+    constexpr uint64_t points_per_thread_step = 10000;
+    {
+        std::vector<std::thread> threads(std::thread::hardware_concurrency());
+        for(auto& t : threads) {
+            t = std::thread([]() { count_points(100000); });
+        }
+        for(auto& t : threads) {
+            t.join();
+        }
+    }
+    {
+        std::vector<uint64_t> points_counts{};
+        for(auto points_per_thread = points_per_thread_min; points_per_thread <= points_per_thread_max; points_per_thread += points_per_thread_step) {
+            for(uint64_t threads_count = 1; threads_count <= static_cast<uint64_t>(std::thread::hardware_concurrency()); ++threads_count) {
+                points_counts.push_back(threads_count * points_per_thread);
+            }
+        }
+        std::sort(std::begin(points_counts), std::end(points_counts));
+        points_counts.erase(std::unique(std::begin(points_counts), std::end(points_counts)), std::end(points_counts));
+
+        const auto fd = open("pi_monte_single.csv", O_RDWR | O_CREAT | O_TRUNC);
+        MY_ASSERT_NOT_LESS_ZERO(fd);
+        defer(MY_ASSERT_NOT_LESS_ZERO(close(fd)));
+        MY_ASSERT_NOT_LESS_ZERO(fchmod(fd, 0666));
+        constexpr std::string_view header = "points_count,nanoseconds\n";
+        MY_ASSERT_NOT_LESS_ZERO(write(fd, header.data(), header.length()));
+        for(const auto points_count : points_counts) {
+            const auto dur = timeit([points_count]() { count_points(points_count); });
+            std::string s = std::to_string(points_count) + "," + std::to_string(dur.count()) + "\n";
+            MY_ASSERT_NOT_LESS_ZERO(write(fd, s.c_str(), s.length()));
+            MY_ASSERT_NOT_LESS_ZERO(fsync(fd));
+        }
+    }
+    {
+        const int fd = open("pi_monte_multi.csv", O_RDWR | O_CREAT | O_TRUNC);
+        MY_ASSERT_NOT_LESS_ZERO(fd);
+        defer(MY_ASSERT_NOT_LESS_ZERO(close(fd)));
+        MY_ASSERT_NOT_LESS_ZERO(fchmod(fd, 0666));
+        constexpr std::string_view header = "points_per_thread,threads_count,nanoseconds\n";
+        MY_ASSERT_NOT_LESS_ZERO(write(fd, header.data(), header.length()));
+        for(uint32_t points_per_thread = points_per_thread_min; points_per_thread <= points_per_thread_max; points_per_thread += points_per_thread_step) {
+            for(uint32_t threads_count = 1; threads_count <= std::thread::hardware_concurrency(); ++threads_count) {
+                const uint32_t total_points = threads_count * points_per_thread;
+
+                std::vector<std::thread> threads(threads_count);
+                MY_FOR_RANGE_ZERO(sample_index, 10) {
+                    const auto dur = timeit([&threads, points_per_thread]() {
+                        for(auto& t : threads) {
+                            t = std::thread([points_per_thread]() { count_points(points_per_thread); });
+                        }
+                        for(auto& t : threads) {
+                            t.join();
+                        }
+                    });
+                    MY_ASSERT_NOT_LESS_ZERO(fsync(fd));
+                    static_assert(std::is_same_v<std::remove_cv_t<decltype(dur)>, std::chrono::nanoseconds>);
+                    const auto s = std::to_string(points_per_thread) + "," + std::to_string(threads_count) + "," + std::to_string(dur.count()) + "\n";
+                    MY_ASSERT_NOT_LESS_ZERO(write(fd, s.c_str(), s.length()));
+                    MY_ASSERT_NOT_LESS_ZERO(fsync(fd));
+                }
+            }
+        }
+    }
 }
 
