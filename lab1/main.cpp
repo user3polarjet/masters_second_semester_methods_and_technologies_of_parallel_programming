@@ -182,15 +182,29 @@ int main() {
         MY_ASSERT_NOT_LESS_ZERO(fd);
         defer(MY_ASSERT_NOT_LESS_ZERO(close(fd)));
         MY_ASSERT_NOT_LESS_ZERO(fchmod(fd, 0666));
-        constexpr std::string_view header = "points_count,nanoseconds,points_circle_count\n";
+        constexpr std::string_view header = "points_count,nanoseconds\n";
         MY_ASSERT_NOT_LESS_ZERO(write(fd, header.data(), header.length()));
         for(const auto points_count : points_counts) {
             MY_FOR_RANGE_ZERO(sample_index, samples_count) {
                 uint64_t points_circle_count = 0;
-                const auto dur = timeit([points_count, &points_circle_count]() {
-                    points_circle_count = count_points(points_count);
-                });
-                const auto s = std::to_string(points_count) + "," + std::to_string(dur.count()) + "," + std::to_string(points_circle_count) + "\n";
+                const auto dur = timeit(
+                    [
+                        points_count
+// #define CHECK_RESULT
+#ifdef CHECK_RESULT
+                        , &points_circle_count
+#endif
+                    ]() {
+#ifdef CHECK_RESULT
+                        points_circle_count =
+#endif
+                        count_points(points_count);
+                    });
+#ifdef CHECK_RESULT
+                const double pi = 4.0 * static_cast<double>(points_circle_count) / static_cast<double>(points_count);
+                MY_LOG_DEBUG("pi: %lf", pi);
+#endif
+                const auto s = std::to_string(points_count) + "," + std::to_string(dur.count()) + "\n";
                 MY_ASSERT_NOT_LESS_ZERO(write(fd, s.c_str(), s.length()));
                 // MY_ASSERT_NOT_LESS_ZERO(fsync(fd));
             }
@@ -210,21 +224,27 @@ int main() {
                 defer(MY_ASSERT_NOT_LESS_ZERO(pthread_barrier_destroy(&barrier)));
 
                 std::vector<std::thread> threads(threads_count);
-                // std::vector<uint64_t> points_circle_counts(threads_count);
-
+#ifdef CHECK_RESULT
+                std::vector<uint64_t> points_circle_counts(threads_count);
+#endif
                 MY_FOR_RANGE_ZERO(thread_index, threads_count) {
                     threads[thread_index] = std::thread(
                         [
                             &barrier, points_per_thread
-                            // , &points_circle_counts, thread_index
+#ifdef CHECK_RESULT
+                            , &points_circle_counts, thread_index
+#endif
                         ]() {
-                        MY_FOR_RANGE_ZERO(sample_index, samples_count) {
-                            MY_PTHREAD_BARRIER_WAIT(&barrier);
-                            // points_circle_counts[thread_index] = 
-                            count_points(points_per_thread);
-                            MY_PTHREAD_BARRIER_WAIT(&barrier);
+                            MY_FOR_RANGE_ZERO(sample_index, samples_count) {
+                                MY_PTHREAD_BARRIER_WAIT(&barrier);
+#ifdef CHECK_RESULT
+                                points_circle_counts[thread_index] = 
+#endif
+                                count_points(points_per_thread);
+                                MY_PTHREAD_BARRIER_WAIT(&barrier);
+                            }
                         }
-                    });
+                    );
                 }
                 defer(for(auto& t : threads) t.join());
 
@@ -232,12 +252,16 @@ int main() {
                     const auto dur = timeit(
                         [
                             &barrier
-                            // , &points_circle_counts, points_per_thread, threads_count
+#ifdef CHECK_RESULT
+                            ,&points_circle_counts, points_per_thread, threads_count
+#endif
                         ]() {
                             MY_PTHREAD_BARRIER_WAIT(&barrier);
                             MY_PTHREAD_BARRIER_WAIT(&barrier);
-                            // const double pi = 4.0 * static_cast<double>(std::accumulate(std::begin(points_circle_counts), std::end(points_circle_counts), 0)) / static_cast<double>(points_per_thread * threads_count);
-                            // MY_LOG_DEBUG("pi: %lf", pi);
+#ifdef CHECK_RESULT
+                            const double pi = 4.0 * static_cast<double>(std::accumulate(std::begin(points_circle_counts), std::end(points_circle_counts), 0)) / static_cast<double>(points_per_thread * threads_count);
+                            MY_LOG_DEBUG("pi: %lf", pi);
+#endif
                         }
                     );
                     static_assert(std::is_same<std::remove_cv_t<decltype(dur)>, std::chrono::nanoseconds>::value, "");
