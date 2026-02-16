@@ -1,4 +1,18 @@
-#include "std_includes.hpp"
+import <algorithm>;
+#include <algorithm>
+#include <numeric>
+#include <string>
+#include <vector>
+#include <array>
+#include <chrono>
+#include <thread>
+#include <numbers>
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <string.h>
+#include <pthread.h>
 
 #define MY_STRINGIFY_IMPL(...) #__VA_ARGS__
 #define MY_S(...) MY_STRINGIFY_IMPL(__VA_ARGS__)
@@ -127,6 +141,14 @@ static uint64_t count_points(const uint64_t points_count) {
     return points_inside_circle_count;
 }
 
+// template<int I, int N, class F>
+// constexpr void static_for(F f) {
+//   if constexpr (I < N) {
+//     f.template operator()<I>();
+//     static_for<I + 1, N>(f);
+//   }
+// }
+
 static constexpr uint64_t points_per_thread_min = 1'000'000;
 static constexpr uint64_t points_per_thread_max = 10'000'000;
 static constexpr uint64_t points_per_thread_step = 1'000'000;
@@ -202,7 +224,6 @@ int main() {
                                 MY_PTHREAD_BARRIER_WAIT(&barrier);
                             }
                         }
-
                     );
                 }
                 defer(for(auto& t : threads) t.join());
