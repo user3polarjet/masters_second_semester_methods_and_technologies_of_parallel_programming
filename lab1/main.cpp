@@ -6,7 +6,10 @@
 #include <vector>
 #include <random>
 #include <limits>
+
 #include <thread>
+#include <barrier>
+
 #include <chrono>
 
 #include <fcntl.h>
@@ -78,22 +81,53 @@ static std::chrono::system_clock::duration timeit(T&& func) {
     return std::chrono::system_clock::now() - start;
 }
 
+struct Xoroshiro128PP {
+    uint64_t s[2];
+
+    void seed(uint64_t x) {
+        s[0] = splitmix64(x);
+        s[1] = splitmix64(x);
+    }
+
+    static uint64_t splitmix64(uint64_t& state) {
+        uint64_t z = (state += 0x9E3779B97F4A7C15);
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EB;
+        return z ^ (z >> 31);
+    }
+
+    static inline uint64_t rotl(uint64_t x, int k) {
+        return (x << k) | (x >> (64 - k));
+    }
+
+    uint64_t next() {
+        const uint64_t s0 = s[0];
+        uint64_t s1 = s[1];
+        const uint64_t result = rotl(s0 + s1, 17) + s0;
+        s1 ^= s0;
+        s[0] = rotl(s0, 49) ^ s1 ^ (s1 << 21);
+        s[1] = rotl(s1, 28);
+        return result;
+    }
+
+    double next_double() {
+        return (next() >> 11) * 0x1.0p-53;
+    }
+};
+
 static uint64_t count_points(const uint64_t points_count) {
-    std::random_device random_device{};
-    std::mt19937 gen(random_device());
-    std::uniform_real_distribution<double> distrib(-1.0, 1.0);
+    Xoroshiro128PP rng{};
+    rng.seed(static_cast<uint64_t>(time(nullptr)));
     uint64_t points_inside_circle_count = 0;
-    MY_FOR_RANGE_ZERO(i, points_count) {
-        const double x = distrib(gen);
-        const double y = distrib(gen);
-        if((x * x + y * y) <= 1.0) {
+    for(uint32_t i = 0; i < points_count; ++i) {
+        const double x = rng.next_double() * 2.0 - 1.0;
+        const double y = rng.next_double() * 2.0 - 1.0;
+        if ((x * x + y * y) <= 1.0) {
             ++points_inside_circle_count;
         }
     }
     return points_inside_circle_count;
 }
-// const int points_inside_circle_count = std::accumulate(std::begin(points_inside_circle_counts), std::end(points_inside_circle_counts), 0);
-// const double pi = 4.0 * static_cast<double>(points_inside_circle_count) / static_cast<double>(points_count);
 
 int main() {
     constexpr uint64_t points_per_thread_min = 10000;
@@ -102,7 +136,7 @@ int main() {
     {
         std::vector<std::thread> threads(std::thread::hardware_concurrency());
         for(auto& t : threads) {
-            t = std::thread([]() { count_points(100000); });
+            t = std::thread([]() { count_points(1000000); });
         }
         for(auto& t : threads) {
             t.join();
@@ -122,11 +156,14 @@ int main() {
         MY_ASSERT_NOT_LESS_ZERO(fd);
         defer(MY_ASSERT_NOT_LESS_ZERO(close(fd)));
         MY_ASSERT_NOT_LESS_ZERO(fchmod(fd, 0666));
-        constexpr std::string_view header = "points_count,nanoseconds\n";
+        constexpr std::string_view header = "points_count,nanoseconds,points_circle_count\n";
         MY_ASSERT_NOT_LESS_ZERO(write(fd, header.data(), header.length()));
         for(const auto points_count : points_counts) {
-            const auto dur = timeit([points_count]() { count_points(points_count); });
-            std::string s = std::to_string(points_count) + "," + std::to_string(dur.count()) + "\n";
+            uint64_t points_circle_count = 0;
+            const auto dur = timeit([points_count, &points_circle_count]() {
+                points_circle_count = count_points(points_count);
+            });
+            const auto s = std::to_string(points_count) + "," + std::to_string(dur.count()) + "," + std::to_string(points_circle_count) + "\n";
             MY_ASSERT_NOT_LESS_ZERO(write(fd, s.c_str(), s.length()));
             MY_ASSERT_NOT_LESS_ZERO(fsync(fd));
         }
@@ -138,11 +175,16 @@ int main() {
         MY_ASSERT_NOT_LESS_ZERO(fchmod(fd, 0666));
         constexpr std::string_view header = "points_per_thread,threads_count,nanoseconds\n";
         MY_ASSERT_NOT_LESS_ZERO(write(fd, header.data(), header.length()));
-        for(uint32_t points_per_thread = points_per_thread_min; points_per_thread <= points_per_thread_max; points_per_thread += points_per_thread_step) {
-            for(uint32_t threads_count = 1; threads_count <= std::thread::hardware_concurrency(); ++threads_count) {
-                const uint32_t total_points = threads_count * points_per_thread;
-
+        for(uint64_t points_per_thread = points_per_thread_min; points_per_thread <= points_per_thread_max; points_per_thread += points_per_thread_step) {
+            for(uint64_t threads_count = 1; threads_count <= static_cast<uint64_t>(std::thread::hardware_concurrency()); ++threads_count) {
                 std::vector<std::thread> threads(threads_count);
+                for(auto& t : threads) {
+                    t = std::thread([&sync_point]() {
+                        sync_point.arrive_and_wait();
+                    })
+                }
+
+
                 MY_FOR_RANGE_ZERO(sample_index, 10) {
                     const auto dur = timeit([&threads, points_per_thread]() {
                         for(auto& t : threads) {
