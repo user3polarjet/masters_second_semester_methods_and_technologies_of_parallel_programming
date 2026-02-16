@@ -31,9 +31,9 @@ int main(int argc, char **argv) {
         if (!nob_cmd_run(&cmd)) return 1;
     }
 
-    const auto main_exec = build_dir / "main";
+    const auto pi_monte_exec = build_dir / "pi_monte";
 
-    if(nob_needs_rebuild1(main_exec.c_str(), "main.cpp")) {
+    if(nob_needs_rebuild1(pi_monte_exec.c_str(), "pi_monte.cpp")) {
         nob_cmd_append(
             &cmd,
             "clang",
@@ -63,8 +63,8 @@ int main(int argc, char **argv) {
             "-Wno-unreachable-code-loop-increment",
 
             "-o", 
-            main_exec.c_str(),
-            "main.cpp"
+            pi_monte_exec.c_str(),
+            "pi_monte.cpp"
         );
         if (!nob_cmd_run(&cmd)) return 1;
     }
