@@ -1,4 +1,17 @@
-#include "std_includes.hpp"
+#include <algorithm>
+#include <numeric>
+#include <string>
+#include <vector>
+#include <array>
+#include <chrono>
+#include <thread>
+#include <numbers>
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <string.h>
+#include <pthread.h>
 
 #define MY_STRINGIFY_IMPL(...) #__VA_ARGS__
 #define MY_S(...) MY_STRINGIFY_IMPL(__VA_ARGS__)
