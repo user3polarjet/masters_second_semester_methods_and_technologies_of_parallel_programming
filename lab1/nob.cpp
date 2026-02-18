@@ -16,7 +16,8 @@ int main(int argc, char **argv) {
 
     const auto exec_sources = {
         "pi_monte",
-        "prime_slice"
+        "prime_slice",
+        "matrix_transpose",
     };
 
     for(const auto exec_source : exec_sources) {
@@ -39,6 +40,7 @@ int main(int argc, char **argv) {
                 "-fno-rtti",
                 "-fno-exceptions",
                 "-fsanitize=address",
+                "-Wno-ctad-maybe-unsupported",
 
                 "-Wno-c++98-compat",
                 "-Wno-c++98-compat-pedantic",
@@ -49,6 +51,7 @@ int main(int argc, char **argv) {
                 "-Wno-padded",
                 "-Wno-unreachable-code-loop-increment",
                 "-Wno-unused-template",
+                "-Wno-unsafe-buffer-usage",
 
                 "-o", 
                 exec_path.c_str(),
