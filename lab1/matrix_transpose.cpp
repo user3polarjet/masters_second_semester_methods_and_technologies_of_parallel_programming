@@ -163,23 +163,23 @@ int main() {
     static constexpr size_t matrix_size = 30000;
 
     {
-        // MY_LOG_DEBUG("start single");
-        // const auto fd = open("matrix_transpose_single.csv", O_RDWR | O_CREAT | O_TRUNC);
-        // MY_ASSERT_NOT_LESS_ZERO(fd);
-        // defer(MY_ASSERT_NOT_LESS_ZERO(close(fd)));
-        // MY_ASSERT_NOT_LESS_ZERO(fchmod(fd, 0666));
-        // constexpr std::string_view header = "nanoseconds\n";
-        // MY_CHECKED_WRITE(fd, header);
-        // MY_FOR_RANGE_ZERO(sample_index, samples_count) {
-        //     std::vector<uint8_t> matrix(matrix_size * matrix_size);
-        //     const auto dur = timeit([&matrix]() { transpose(matrix.data(), matrix_size); });
-        //     const auto line = std::to_string(dur.count()) + "\n";
-        //     MY_CHECKED_WRITE(fd, line);
-        //     printf("%s", line.data());
-        // }
-        // MY_LOG_DEBUG("end single");
+        MY_LOG_DEBUG("start single");
+        const auto fd = open("matrix_transpose_single.csv", O_RDWR | O_CREAT | O_TRUNC);
+        MY_ASSERT_NOT_LESS_ZERO(fd);
+        defer(MY_ASSERT_NOT_LESS_ZERO(close(fd)));
+        MY_ASSERT_NOT_LESS_ZERO(fchmod(fd, 0666));
+        constexpr std::string_view header = "nanoseconds\n";
+        MY_CHECKED_WRITE(fd, header);
+        MY_FOR_RANGE_ZERO(sample_index, samples_count) {
+            std::vector<uint8_t> matrix(matrix_size * matrix_size);
+            const auto dur = timeit([&matrix]() { transpose(matrix.data(), matrix_size); });
+            const auto line = std::to_string(dur.count()) + "\n";
+            MY_CHECKED_WRITE(fd, line);
+            printf("%s", line.data());
+        }
+        MY_LOG_DEBUG("end single");
     }
-    // warm_up();
+    warm_up();
     {
         MY_LOG_DEBUG("start multi");
 
