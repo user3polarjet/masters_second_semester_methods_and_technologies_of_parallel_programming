@@ -18,6 +18,7 @@ int main(int argc, char **argv) {
         "pi_monte",
         "prime_slice",
         "matrix_transpose",
+        "gen_dir",
         "count_words",
     };
 
@@ -47,6 +48,7 @@ int main(int argc, char **argv) {
                 "-Wno-c++98-compat-pedantic",
                 "-Wno-unused-macros",
                 "-Wno-unused",
+                "-Wno-unused-parameter",
                 "-Wno-unsafe-buffer-usage-in-libc-call",
                 "-Wno-disabled-macro-expansion",
                 "-Wno-padded",
