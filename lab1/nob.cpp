@@ -18,6 +18,7 @@ int main(int argc, char **argv) {
         "pi_monte",
         "prime_slice",
         "matrix_transpose",
+        "count_words",
     };
 
     for(const auto exec_source : exec_sources) {
