@@ -1,4 +1,5 @@
 #include <concepts>
+#include <string_view>
 #include <vector>
 #include <chrono>
 #include <thread>
@@ -131,8 +132,8 @@ int main() {
     MY_ASSERT_NOT_LESS_ZERO(dev_null_fd);
     defer(MY_ASSERT_NOT_LESS_ZERO(close(dev_null_fd)));
 
-    for(const auto& f : file_paths) {
-        const int fd = openat(files_dir_fd, f.c_str(), O_RDONLY);
+    const auto count_words = [files_dir_fd, dev_null_fd](const std::basic_string_view<char> name) {
+        const int fd = openat(files_dir_fd, name.data(), O_RDONLY);
         MY_ASSERT_NOT_LESS_ZERO(fd);
         defer(MY_ASSERT_NOT_LESS_ZERO(close(fd)));
         struct stat st;
@@ -152,95 +153,90 @@ int main() {
             word_count++;
         }
         write(dev_null_fd, &word_count, sizeof(word_count));
-    }
+    };
 
-    // const auto warm_up = []() {
-    //     MY_LOG_DEBUG("start warm_up");
-    //     const auto dur = timeit([&]() {
-    //         constexpr uint64_t mmax = std::numeric_limits<uint32_t>::max() >> 8;
-    //         constexpr uint64_t mmin = mmax >> 1;
-    //         std::array<std::jthread, cpus_count> threads{};    
-    //         for(auto& t : threads) {
-    //             t = std::jthread([]() {
-    //                 constexpr size_t matrix_size = 20000; 
-    //                 std::vector<uint8_t> matrix(matrix_size * matrix_size);
-    //                 transpose(matrix.data(), matrix_size);
-    //             });
-    //         }
-    //     });
-    //     const auto dur_casted = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(dur);
-    //     MY_LOG_DEBUG("end warm_up, took %lf ms", dur_casted.count());
-    // };
-    //
-    // warm_up();
-    // static constexpr size_t matrix_size = 30000;
-    //
-    // {
-    //     MY_LOG_DEBUG("start single");
-    //     const auto fd = open("matrix_transpose_single.csv", O_RDWR | O_CREAT | O_TRUNC);
-    //     MY_ASSERT_NOT_LESS_ZERO(fd);
-    //     defer(MY_ASSERT_NOT_LESS_ZERO(close(fd)));
-    //     MY_ASSERT_NOT_LESS_ZERO(fchmod(fd, 0666));
-    //     constexpr std::string_view header = "nanoseconds\n";
-    //     MY_CHECKED_WRITE(fd, header);
-    //     MY_FOR_RANGE_ZERO(sample_index, samples_count) {
-    //         std::vector<uint8_t> matrix(matrix_size * matrix_size);
-    //         const auto dur = timeit([&matrix]() { transpose(matrix.data(), matrix_size); });
-    //         const auto line = std::to_string(dur.count()) + "\n";
-    //         MY_CHECKED_WRITE(fd, line);
-    //         printf("%s", line.data());
-    //     }
-    //     MY_LOG_DEBUG("end single");
-    // }
-    // warm_up();
-    // {
-    //     MY_LOG_DEBUG("start multi");
-    //
-    //     const int fd = open("matrix_transpose_multi.csv", O_RDWR | O_CREAT | O_TRUNC);
-    //     MY_ASSERT_NOT_LESS_ZERO(fd);
-    //     defer(MY_ASSERT_NOT_LESS_ZERO(close(fd)));
-    //     MY_ASSERT_NOT_LESS_ZERO(fchmod(fd, 0666));
-    //     constexpr std::string_view header = "threads_count,nanoseconds\n";
-    //     MY_CHECKED_WRITE(fd, header);
-    //
-    //     MY_FOR_RANGE(size_t, threads_count, 2, cpus_count + 1) {
-    //         MY_FOR_RANGE_ZERO(sample_index, samples_count) {
-    //             pthread_barrier_t barrier{};
-    //             MY_ASSERT_NOT_LESS_ZERO(pthread_barrier_init(&barrier, nullptr, static_cast<uint32_t>(threads_count + 1)));
-    //             defer(MY_ASSERT_NOT_LESS_ZERO(pthread_barrier_destroy(&barrier)));
-    //
-    //             std::vector<uint8_t> matrix(matrix_size * matrix_size);
-    //             std::vector<std::jthread> threads(threads_count);
-    //             MY_FOR_RANGE_ZERO(thread_index, threads_count) {
-    //                 threads[thread_index] = std::jthread(
-    //                     [&barrier, thread_index, threads_count, &matrix]() {
-    //                         MY_PTHREAD_BARRIER_WAIT(&barrier);
-    //                         MY_PTHREAD_BARRIER_WAIT(&barrier);
-    //                         for(size_t row = thread_index; row < matrix_size - 1; row += threads_count) {
-    //                             for(size_t col = row + 1; col < matrix_size; ++col) {
-    //                                  uint8_t temp = matrix[row * matrix_size + col];
-    //                                  matrix[row * matrix_size + col] = matrix[col * matrix_size + row];
-    //                                  matrix[col * matrix_size + row] = temp;
-    //                             }
-    //                         }
-    //                         MY_PTHREAD_BARRIER_WAIT(&barrier);
-    //                     }
-    //                 );
-    //             }
-    //             MY_PTHREAD_BARRIER_WAIT(&barrier);
-    //             const auto dur = timeit(
-    //                 [&barrier]() {
-    //                     MY_PTHREAD_BARRIER_WAIT(&barrier);
-    //                     MY_PTHREAD_BARRIER_WAIT(&barrier);
-    //                 }
-    //             );
-    //             const auto line = std::to_string(threads_count) + "," + std::to_string(dur.count()) + "\n";
-    //             MY_CHECKED_WRITE(fd, line);
-    //             printf("%s", line.data());
-    //         }
-    //     }
-    //     MY_LOG_DEBUG("end multi");
-    // }
+    const auto warm_up = [&file_paths, &count_words]() {
+        MY_LOG_DEBUG("start warm_up");
+        const auto dur = timeit([&file_paths, &count_words]() {
+            std::array<std::jthread, cpus_count> threads{};    
+            for(auto& t : threads) {
+                t = std::jthread([&file_paths, &count_words]() {
+                    for(const auto& f : file_paths) {
+                        count_words(f.native());
+                    }
+                });
+            }
+        });
+        const auto dur_casted = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(dur);
+        MY_LOG_DEBUG("end warm_up, took %lf ms", dur_casted.count());
+    };
+    warm_up();
+    {
+        MY_LOG_DEBUG("start single");
+        const auto filename = current_file.stem().filename().native() + "_single.csv";
+        const auto fd = open(filename.c_str(), O_RDWR | O_CREAT | O_TRUNC);
+        MY_ASSERT_NOT_LESS_ZERO(fd);
+        defer(MY_ASSERT_NOT_LESS_ZERO(close(fd)));
+        MY_ASSERT_NOT_LESS_ZERO(fchmod(fd, 0666));
+        constexpr std::string_view header = "nanoseconds\n";
+        MY_CHECKED_WRITE(fd, header);
+        MY_FOR_RANGE_ZERO(sample_index, samples_count) {
+            const auto dur = timeit([&]() {
+                for(const auto& f : file_paths) {
+                    count_words(f.native());
+                }
+            });
+            const auto line = std::to_string(dur.count()) + "\n";
+            MY_CHECKED_WRITE(fd, line);
+            printf("%s", line.data());
+        }
+        MY_LOG_DEBUG("end single");
+    }
+    warm_up();
+    {
+        MY_LOG_DEBUG("start multi");
+
+        const auto filename = current_file.stem().filename().native() + "_multi.csv";
+        const int fd = open(filename.c_str(), O_RDWR | O_CREAT | O_TRUNC);
+        MY_ASSERT_NOT_LESS_ZERO(fd);
+        defer(MY_ASSERT_NOT_LESS_ZERO(close(fd)));
+        MY_ASSERT_NOT_LESS_ZERO(fchmod(fd, 0666));
+        constexpr std::string_view header = "threads_count,nanoseconds\n";
+        MY_CHECKED_WRITE(fd, header);
+
+        MY_FOR_RANGE(size_t, threads_count, 2, cpus_count + 1) {
+            MY_FOR_RANGE_ZERO(sample_index, samples_count) {
+                pthread_barrier_t barrier{};
+                MY_ASSERT_NOT_LESS_ZERO(pthread_barrier_init(&barrier, nullptr, static_cast<uint32_t>(threads_count + 1)));
+                defer(MY_ASSERT_NOT_LESS_ZERO(pthread_barrier_destroy(&barrier)));
+
+                std::vector<std::jthread> threads(threads_count);
+                MY_FOR_RANGE_ZERO(thread_index, threads_count) {
+                    threads[thread_index] = std::jthread(
+                        [&barrier, thread_index, threads_count, &file_paths, &count_words]() {
+                            MY_PTHREAD_BARRIER_WAIT(&barrier);
+                            MY_PTHREAD_BARRIER_WAIT(&barrier);
+                            for(size_t file_index = thread_index; file_index < file_paths.size() - 1; file_index += threads_count) {
+                                count_words(file_paths[file_index].native());
+                            }
+                            MY_PTHREAD_BARRIER_WAIT(&barrier);
+                        }
+                    );
+                }
+                MY_PTHREAD_BARRIER_WAIT(&barrier);
+                const auto dur = timeit(
+                    [&barrier]() {
+                        MY_PTHREAD_BARRIER_WAIT(&barrier);
+                        MY_PTHREAD_BARRIER_WAIT(&barrier);
+                    }
+                );
+                const auto line = std::to_string(threads_count) + "," + std::to_string(dur.count()) + "\n";
+                MY_CHECKED_WRITE(fd, line);
+                printf("%s", line.data());
+            }
+        }
+        MY_LOG_DEBUG("end multi");
+    }
     return 0;
 }
 
