@@ -1,13 +1,9 @@
-#include <algorithm>
 #include <cstdint>
-#include <numeric>
 #include <string>
-#include <type_traits>
 #include <vector>
 #include <array>
 #include <chrono>
 #include <thread>
-#include <numbers>
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -108,16 +104,6 @@ static bool is_prime(uint64_t n) {
 static constexpr size_t cpus_count = 12;
 static constexpr size_t samples_count = 10;
 
-template<auto MMIN, auto MMAX, class F>
-static constexpr void static_for(F&& f) {
-    static_assert(std::is_same_v<decltype(MMIN), decltype(MMAX)>);
-    static_assert(std::is_integral_v<decltype(MMIN)>);
-    if constexpr (MMIN < MMAX) {
-        std::forward<F>(f).template operator()<MMIN>();
-        static_for<MMIN + 1, MMAX>(std::forward<F>(f));
-    }
-}
-
 #define MY_CHECKED_WRITE(fd, s) do { const auto MY_CONCAT(_my_checked_write_, __LINE__) = write(fd, s.data(), s.length()); MY_ASSERT_NOT_LESS_ZERO(MY_CONCAT(_my_checked_write_, __LINE__)); MY_ASSERT(static_cast<size_t>(MY_CONCAT(_my_checked_write_, __LINE__)) == s.length()); } while(0)
 
 int main() {
@@ -174,7 +160,6 @@ int main() {
             }
         }
     }
-
     MY_LOG_DEBUG("end single");
 
     warm_up();
@@ -189,16 +174,14 @@ int main() {
         MY_CHECKED_WRITE(fd, header);
 
         MY_FOR_RANGE(uint64_t, i, 7, 10) {
-
             const uint64_t mmax = std::numeric_limits<uint32_t>::max() >> i;
             const uint64_t mmin = mmax >> 1;
-
-            static_for<static_cast<size_t>(2), cpus_count>([dev_null_fd, fd, mmin, mmax]<auto threads_count>() {
+            MY_FOR_RANGE(size_t, threads_count, 2, cpus_count) {
                 pthread_barrier_t barrier{};
-                MY_ASSERT_NOT_LESS_ZERO(pthread_barrier_init(&barrier, nullptr, threads_count + 1));
+                MY_ASSERT_NOT_LESS_ZERO(pthread_barrier_init(&barrier, nullptr, static_cast<uint32_t>(threads_count + 1)));
                 defer(MY_ASSERT_NOT_LESS_ZERO(pthread_barrier_destroy(&barrier)));
 
-                std::array<std::jthread, threads_count> threads{};
+                std::vector<std::jthread> threads(threads_count);
 
                 const auto range_len = mmax - mmin;
                 const auto step = range_len / threads_count;
@@ -219,6 +202,7 @@ int main() {
                         [&barrier, dev_null_fd, local_mmin, local_mmax]() {
                             MY_FOR_RANGE_ZERO(sample_index, samples_count) {
                                 MY_PTHREAD_BARRIER_WAIT(&barrier);
+                                MY_PTHREAD_BARRIER_WAIT(&barrier);
 
                                 MY_FOR_RANGE(uint64_t, number, local_mmin, local_mmax) {
                                     const bool res = is_prime(number);
@@ -232,6 +216,7 @@ int main() {
                 }
 
                 MY_FOR_RANGE_ZERO(sample_index, samples_count) {
+                    MY_PTHREAD_BARRIER_WAIT(&barrier);
                     const auto dur = timeit(
                         [&barrier]() {
                             MY_PTHREAD_BARRIER_WAIT(&barrier);
@@ -242,33 +227,10 @@ int main() {
                     MY_CHECKED_WRITE(fd, line);
                     printf("%s", line.data());
                 }
-            });
+            }
         }
     }
     MY_LOG_DEBUG("end multi");
     return 0;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
