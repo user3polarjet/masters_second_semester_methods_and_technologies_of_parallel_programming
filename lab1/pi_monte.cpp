@@ -140,34 +140,39 @@ static uint64_t count_points(const uint64_t points_count) {
     return points_inside_circle_count;
 }
 
-static constexpr uint64_t points_per_thread_min = 1'000'000;
-static constexpr uint64_t points_per_thread_max = 10'000'000;
-static constexpr uint64_t points_per_thread_step = 1'000'000;
 static constexpr size_t cpus_count = 12;
+static constexpr size_t samples_count = 10;
 
 int main() {
     MY_ASSERT(sysconf(_SC_NPROCESSORS_ONLN) == static_cast<long>(cpus_count));
-    {
-        std::vector<std::thread> threads(cpus_count);
-        for(auto& thread : threads) {
-            thread = std::thread([]() { count_points(1'000'000); });
-        }
-        for(auto& thread : threads) {
-            thread.join();
-        }
-    }
-    static constexpr size_t samples_count = 10;
 
-    {
-        std::vector<uint64_t> points_counts{};
-        for(auto points_per_thread = points_per_thread_min; points_per_thread <= points_per_thread_max; points_per_thread += points_per_thread_step) {
-            for(uint64_t threads_count = 1; threads_count <= static_cast<uint64_t>(cpus_count); ++threads_count) {
-                points_counts.push_back(threads_count * points_per_thread);
+    const auto warm_up = []() {
+        MY_LOG_DEBUG("start warm_up");
+        const auto dur = timeit([&]() {
+            std::array<std::jthread, cpus_count> threads{};
+            for(auto& thread : threads) {
+                thread = std::jthread([]() { count_points(10'000'000); });
             }
-        }
-        std::sort(std::begin(points_counts), std::end(points_counts));
-        points_counts.erase(std::unique(std::begin(points_counts), std::end(points_counts)), std::end(points_counts));
+        });
+        const auto dur_casted = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(dur);
+        MY_LOG_DEBUG("end warm_up, took %lf ms", dur_casted.count());
+    };
+    warm_up();
 
+    const std::vector<uint64_t> points_counts{
+        100'000'000,
+        200'000'000,
+        300'000'000,
+        400'000'000,
+        500'000'000,
+        600'000'000,
+        700'000'000,
+        800'000'000,
+        900'000'000,
+        1'000'000'000,
+    };
+    {
+        MY_LOG_DEBUG("start multi");
         const auto fd = open("pi_monte_single.csv", O_RDWR | O_CREAT | O_TRUNC);
         MY_ASSERT_NOT_LESS_ZERO(fd);
         defer(MY_ASSERT_NOT_LESS_ZERO(close(fd)));
@@ -186,56 +191,66 @@ int main() {
 
                 const auto s = std::to_string(points_count) + "," + std::to_string(dur.count()) + "\n";
                 MY_ASSERT_NOT_LESS_ZERO(write(fd, s.c_str(), s.length()));
-                // MY_ASSERT_NOT_LESS_ZERO(fsync(fd));
+                printf("%s", s.data());
             }
         }
+        MY_LOG_DEBUG("end multi");
     }
+    warm_up();
     {
+        MY_LOG_DEBUG("start multi");
         const int fd = open("pi_monte_multi.csv", O_RDWR | O_CREAT | O_TRUNC);
         MY_ASSERT_NOT_LESS_ZERO(fd);
         defer(MY_ASSERT_NOT_LESS_ZERO(close(fd)));
         MY_ASSERT_NOT_LESS_ZERO(fchmod(fd, 0666));
-        constexpr std::string_view header = "points_per_thread,threads_count,nanoseconds\n";
+        constexpr std::string_view header = "points_count,threads_count,nanoseconds\n";
         MY_ASSERT_NOT_LESS_ZERO(write(fd, header.data(), header.length()));
-        for(uint64_t points_per_thread = points_per_thread_min; points_per_thread <= points_per_thread_max; points_per_thread += points_per_thread_step) {
+
+        for(const auto points_count : points_counts) {
             for(uint32_t threads_count = 2; threads_count <= cpus_count; ++threads_count) {
+
                 pthread_barrier_t barrier{};
                 MY_ASSERT_NOT_LESS_ZERO(pthread_barrier_init(&barrier, nullptr, threads_count + 1));
                 defer(MY_ASSERT_NOT_LESS_ZERO(pthread_barrier_destroy(&barrier)));
 
-                std::vector<std::thread> threads(threads_count);
+                std::vector<std::jthread> threads(threads_count);
                 std::vector<uint64_t> points_circle_counts(threads_count);
 
-                MY_FOR_RANGE_ZERO(thread_index, threads_count) {
-                    threads[thread_index] = std::thread(
-                        [ &barrier, points_per_thread , &points_circle_counts, thread_index]() {
+                const auto range_len = points_count;
+                MY_ASSERT(range_len > threads_count);
+                const auto step = range_len / threads_count;
+                const auto remainder = range_len % threads_count;
+                for(size_t thread_index = 0; thread_index < threads_count; ++thread_index) {
+                    const auto points_per_thread = thread_index < remainder ? step + 1 : step;
+                    threads[thread_index] = std::jthread(
+                        [&barrier, points_per_thread , &points_circle_counts, thread_index, threads_count]() {
                             MY_FOR_RANGE_ZERO(sample_index, samples_count) {
+                                MY_PTHREAD_BARRIER_WAIT(&barrier);
                                 MY_PTHREAD_BARRIER_WAIT(&barrier);
                                 points_circle_counts[thread_index] = count_points(points_per_thread);
                                 MY_PTHREAD_BARRIER_WAIT(&barrier);
                             }
                         }
-
                     );
                 }
-                defer(for(auto& t : threads) t.join());
 
                 MY_FOR_RANGE_ZERO(sample_index, samples_count) {
+                    MY_PTHREAD_BARRIER_WAIT(&barrier);
                     const auto dur = timeit(
-                        [&barrier ,&points_circle_counts, points_per_thread, threads_count]() {
+                        [&barrier ,&points_circle_counts, points_count, threads_count]() {
                             MY_PTHREAD_BARRIER_WAIT(&barrier);
                             MY_PTHREAD_BARRIER_WAIT(&barrier);
-                            const double pi = 4.0 * static_cast<double>(std::accumulate(std::begin(points_circle_counts), std::end(points_circle_counts), 0)) / static_cast<double>(points_per_thread * threads_count);
+                            const double pi = 4.0 * static_cast<double>(std::accumulate(std::begin(points_circle_counts), std::end(points_circle_counts), 0)) / static_cast<double>(points_count);
                             MY_ASSERT(std::abs(pi - std::numbers::pi) < 0.01);
                         }
                     );
                     static_assert(std::is_same<std::remove_cv_t<decltype(dur)>, std::chrono::nanoseconds>::value, "");
-                    const auto s = std::to_string(points_per_thread) + "," + std::to_string(threads_count) + "," + std::to_string(dur.count()) + "\n";
+                    const auto s = std::to_string(points_count) + "," + std::to_string(threads_count) + "," + std::to_string(dur.count()) + "\n";
                     MY_ASSERT_NOT_LESS_ZERO(write(fd, s.c_str(), s.length()));
-                    // MY_ASSERT_NOT_LESS_ZERO(fsync(fd));
-                    // printf("%s", s.data());
+                    printf("%s", s.data());
                 }
             }
+            MY_LOG_DEBUG("end multi");
         }
     }
 }
