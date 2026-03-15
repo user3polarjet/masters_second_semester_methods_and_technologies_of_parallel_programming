@@ -1,0 +1,4 @@
+sequential,1.043637177,99
+map-reduce,0.162924195,99
+fork-join,0.165254114,99
+worker-pool,0.166606216,99
