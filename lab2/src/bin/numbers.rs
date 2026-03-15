@@ -2,8 +2,8 @@ use rayon::prelude::*;
 use std::io::Write;
 
 fn process_chunk(chunk: &[f64]) -> (f64, f64, f64, usize) {
-    let mut min = std::f64::INFINITY;
-    let mut max = std::f64::NEG_INFINITY;
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
     let mut sum = 0.0;
     let count = chunk.len();
 
