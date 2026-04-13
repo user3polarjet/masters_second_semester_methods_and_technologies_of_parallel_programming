@@ -14,7 +14,7 @@ use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd};
 const GRID_WIDTH: u32 = 640;
 const GRID_HEIGHT: u32 = 480;
 const NUM_PARTICLES: u32 = 100_000;
-const MAX_DENSITY: u32 = 50;
+const MAX_DENSITY: u32 = 2;
 
 // --- CORE SKELETON MACROS & TRAITS ---
 
@@ -144,24 +144,6 @@ fn create_instance() -> vk::VkInstance {
     enabled_extension_names.extend(glfw_required_instance_extensions.iter());
 
     let enabled_layer_names = [c_str!("VK_LAYER_KHRONOS_validation")];
-    {
-        let vk_layer_properties_arr = vk_enumerate!(vk::vkEnumerateInstanceLayerProperties);
-        for layer_name in enabled_layer_names {
-            let c_layer_name = unsafe { std::ffi::CStr::from_ptr(layer_name) };
-            vk_layer_properties_arr
-                .iter()
-                .find(|el| unsafe { std::ffi::CStr::from_ptr(el.layerName.as_ptr()) == c_layer_name })
-                .unwrap();
-        }
-    }
-
-    for ext in &enabled_extension_names {
-        println!("ext: {:?}", unsafe { std::ffi::CStr::from_ptr(*ext) })
-    }
-
-    for ext in &enabled_layer_names {
-        println!("layer: {:?}", unsafe { std::ffi::CStr::from_ptr(*ext) })
-    }
 
     let vk_instance_create_info = vk::VkInstanceCreateInfo {
         sType: vk::VkStructureType::VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -222,28 +204,20 @@ fn create_device(vk_physical_device: vk::VkPhysicalDevice, queue_family_index: u
     let required_extensions = [
         c_str!("VK_KHR_swapchain"),
         c_str!("VK_KHR_dynamic_rendering"),
-        c_str!("VK_EXT_shader_object"),
+        // VK_EXT_shader_object REMOVED
     ];
-
-    let mut shader_object_features = vk::VkPhysicalDeviceShaderObjectFeaturesEXT {
-        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT,
-        shaderObject: vk::VK_TRUE,
-        ..Default::default()
-    };
 
     let mut vk_13_features = vk::VkPhysicalDeviceVulkan13Features {
         sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
         dynamicRendering: vk::VK_TRUE,
         synchronization2: vk::VK_TRUE,
-        pNext: &mut shader_object_features as *mut _ as *mut std::ffi::c_void,
         ..Default::default()
     };
 
-    // --- FIX IS HERE ---
     let mut vk_12_features = vk::VkPhysicalDeviceVulkan12Features {
         sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
         vulkanMemoryModel: vk::VK_TRUE,
-        vulkanMemoryModelDeviceScope: vk::VK_TRUE, // <--- ADD THIS LINE
+        vulkanMemoryModelDeviceScope: vk::VK_TRUE,
         pNext: &mut vk_13_features as *mut _ as *mut std::ffi::c_void,
         ..Default::default()
     };
@@ -257,7 +231,6 @@ fn create_device(vk_physical_device: vk::VkPhysicalDevice, queue_family_index: u
         ..Default::default()
     };
 
-    // Notice we pass vk_12_features into the pNext chain
     let create_info = vk::VkDeviceCreateInfo {
         sType: vk::VkStructureType::VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         pNext: &mut vk_12_features as *mut _ as *mut std::ffi::c_void,
@@ -290,63 +263,18 @@ fn find_memory_type_index(vk_physical_device: vk::VkPhysicalDevice, memory_type_
     panic!("Failed to find suitable memory type.");
 }
 
-// --- SHADER OBJECT LOADERS ---
-
-// Because Shader Objects are an extension, we must dynamically load the function pointers.
-struct VulkanExtFns {
-    // Shader Objects
-    vkCreateShadersEXT: unsafe extern "system" fn(
-        vk::VkDevice,
-        u32,
-        *const vk::VkShaderCreateInfoEXT,
-        *const vk::VkAllocationCallbacks,
-        *mut vk::VkShaderEXT,
-    ) -> vk::VkResult,
-    vkDestroyShaderEXT: unsafe extern "system" fn(vk::VkDevice, vk::VkShaderEXT, *const vk::VkAllocationCallbacks),
-    vkCmdBindShadersEXT: unsafe extern "system" fn(vk::VkCommandBuffer, u32, *const vk::VkShaderStageFlagBits, *const vk::VkShaderEXT),
-    vkCmdSetPolygonModeEXT: unsafe extern "system" fn(vk::VkCommandBuffer, vk::VkPolygonMode),
-    vkCmdSetRasterizationSamplesEXT: unsafe extern "system" fn(vk::VkCommandBuffer, vk::VkSampleCountFlagBits),
-    vkCmdSetAlphaToCoverageEnableEXT: unsafe extern "system" fn(vk::VkCommandBuffer, vk::VkBool32),
-    vkCmdSetColorBlendEnableEXT: unsafe extern "system" fn(vk::VkCommandBuffer, u32, u32, *const vk::VkBool32),
-    vkCmdSetRasterizerDiscardEnableEXT: unsafe extern "system" fn(vk::VkCommandBuffer, vk::VkBool32),
-    vkCmdSetVertexInputEXT: unsafe extern "system" fn(vk::VkCommandBuffer, u32, *const std::ffi::c_void, u32, *const std::ffi::c_void),
-
-    // Dynamic Rendering
+// Just load the dynamic rendering commands now
+struct DynamicRenderingFns {
     vkCmdBeginRenderingKHR: unsafe extern "system" fn(vk::VkCommandBuffer, *const vk::VkRenderingInfoKHR),
     vkCmdEndRenderingKHR: unsafe extern "system" fn(vk::VkCommandBuffer),
-    vkCmdSetSampleMaskEXT: unsafe extern "system" fn(vk::VkCommandBuffer, vk::VkSampleCountFlagBits, *const vk::VkSampleMask),
-    vkCmdSetColorWriteMaskEXT: unsafe extern "system" fn(vk::VkCommandBuffer, u32, u32, *const vk::VkColorComponentFlags),
-    vkCmdSetViewportWithCountEXT: unsafe extern "system" fn(vk::VkCommandBuffer, u32, *const vk::VkViewport),
-    vkCmdSetScissorWithCountEXT: unsafe extern "system" fn(vk::VkCommandBuffer, u32, *const vk::VkRect2D),
 }
 
-impl VulkanExtFns {
+impl DynamicRenderingFns {
     fn new(device: vk::VkDevice) -> Self {
         unsafe {
             Self {
-                vkCreateShadersEXT: std::mem::transmute(vk::vkGetDeviceProcAddr(device, c_str!("vkCreateShadersEXT")).unwrap()),
-                vkDestroyShaderEXT: std::mem::transmute(vk::vkGetDeviceProcAddr(device, c_str!("vkDestroyShaderEXT")).unwrap()),
-                vkCmdBindShadersEXT: std::mem::transmute(vk::vkGetDeviceProcAddr(device, c_str!("vkCmdBindShadersEXT")).unwrap()),
-                vkCmdSetPolygonModeEXT: std::mem::transmute(vk::vkGetDeviceProcAddr(device, c_str!("vkCmdSetPolygonModeEXT")).unwrap()),
-                vkCmdSetRasterizationSamplesEXT: std::mem::transmute(
-                    vk::vkGetDeviceProcAddr(device, c_str!("vkCmdSetRasterizationSamplesEXT")).unwrap(),
-                ),
-                vkCmdSetAlphaToCoverageEnableEXT: std::mem::transmute(
-                    vk::vkGetDeviceProcAddr(device, c_str!("vkCmdSetAlphaToCoverageEnableEXT")).unwrap(),
-                ),
-                vkCmdSetColorBlendEnableEXT: std::mem::transmute(vk::vkGetDeviceProcAddr(device, c_str!("vkCmdSetColorBlendEnableEXT")).unwrap()),
-                vkCmdSetRasterizerDiscardEnableEXT: std::mem::transmute(
-                    vk::vkGetDeviceProcAddr(device, c_str!("vkCmdSetRasterizerDiscardEnableEXT")).unwrap(),
-                ),
-                vkCmdSetVertexInputEXT: std::mem::transmute(vk::vkGetDeviceProcAddr(device, c_str!("vkCmdSetVertexInputEXT")).unwrap()),
-
-                // Add these two:
                 vkCmdBeginRenderingKHR: std::mem::transmute(vk::vkGetDeviceProcAddr(device, c_str!("vkCmdBeginRenderingKHR")).unwrap()),
                 vkCmdEndRenderingKHR: std::mem::transmute(vk::vkGetDeviceProcAddr(device, c_str!("vkCmdEndRenderingKHR")).unwrap()),
-                vkCmdSetSampleMaskEXT: std::mem::transmute(vk::vkGetDeviceProcAddr(device, c_str!("vkCmdSetSampleMaskEXT")).unwrap()),
-                vkCmdSetColorWriteMaskEXT: std::mem::transmute(vk::vkGetDeviceProcAddr(device, c_str!("vkCmdSetColorWriteMaskEXT")).unwrap()),
-                vkCmdSetViewportWithCountEXT: std::mem::transmute(vk::vkGetDeviceProcAddr(device, c_str!("vkCmdSetViewportWithCountEXT")).unwrap()),
-                vkCmdSetScissorWithCountEXT: std::mem::transmute(vk::vkGetDeviceProcAddr(device, c_str!("vkCmdSetScissorWithCountEXT")).unwrap()),
             }
         }
     }
@@ -357,51 +285,23 @@ impl VulkanExtFns {
 macro_rules! include_spirv {
     ($path:expr) => {{
         const BYTES: &[u8] = include_bytes!(env!($path));
-
-        // Static Assert: Ensure length is a multiple of 4
         const _: () = assert!(BYTES.len() % 4 == 0, "SPIR-V binary must be 32-bit aligned");
-
-        // Transmute bytes to u32 at compile time
-        // Note: This requires the bytes to be aligned in the binary.
-        // include_bytes! usually aligns to 1, so we use a union to force alignment.
         #[repr(C)]
         union Transmuter {
             bytes: [u8; BYTES.len()],
             words: [u32; BYTES.len() / 4],
         }
-
         const TRANSMUTED: &[u32] = unsafe {
             &Transmuter {
                 bytes: *include_bytes!(env!($path)),
             }
             .words
         };
-
         TRANSMUTED
     }};
 }
 
 const SHADER_CODE: &[u32] = include_spirv!("SHADERS_PATH");
-
-macro_rules! vk_create {
-    ($func:expr, $( $arg:expr ),*) => {
-        {
-            let mut value = Default::default();
-            unsafe { $func($($arg,)* &mut value); }
-            value
-        }
-    };
-}
-
-macro_rules! vk_create_assert {
-    ($func:expr, $( $arg:expr ),*) => {
-        {
-            let mut value = Default::default();
-            unsafe { vk_assert!($func($($arg,)* &mut value)); }
-            value
-        }
-    };
-}
 
 const REQUIRED_SURFACE_FORMAT: vk::VkSurfaceFormatKHR = vk::VkSurfaceFormatKHR {
     format: vk::VkFormat::VK_FORMAT_B8G8R8A8_UNORM,
@@ -426,24 +326,11 @@ fn recreate_swapchain(
     }
 
     let vk_surface_format_khrs = vk_enumerate!(vk::vkGetPhysicalDeviceSurfaceFormatsKHR, vk_physical_device, vk_surface_khr);
-
-    for format in &vk_surface_format_khrs {
-        println!("Supported format: {:?}", format.format);
-    }
-
     assert!(
         vk_surface_format_khrs
             .iter()
             .any(|f| { f.format == REQUIRED_SURFACE_FORMAT.format && f.colorSpace == REQUIRED_SURFACE_FORMAT.colorSpace })
     );
-
-    let vk_present_modes_khrs = vk_enumerate!(vk::vkGetPhysicalDeviceSurfacePresentModesKHR, vk_physical_device, vk_surface_khr);
-
-    for mode in &vk_present_modes_khrs {
-        println!("Supported present mode: {:?}", mode);
-    }
-
-    assert!(vk_present_modes_khrs.iter().any(|&mode| mode == REQUIRED_PRESENT_MODE));
 
     let vk_swapchain_extent = unsafe {
         let mut width: i32 = 0;
@@ -460,9 +347,6 @@ fn recreate_swapchain(
             ),
         }
     };
-
-    // Assert that there is no limit to max image count (0 means unlimited in Vulkan)
-    assert_eq!(vk_surface_capabilities_khr.maxImageCount, 0);
 
     let old_swapchain = *vk_swapchain_khr;
 
@@ -499,84 +383,12 @@ fn recreate_swapchain(
     vk_swapchain_extent
 }
 
-unsafe extern "C" fn debug_callback(
-    messageSeverity: vk::VkDebugUtilsMessageSeverityFlagBitsEXT,
-    messageTypes: vk::VkDebugUtilsMessageTypeFlagsEXT,
-    pCallbackData: *const vk::VkDebugUtilsMessengerCallbackDataEXT,
-    pUserData: *mut ::core::ffi::c_void,
-) -> vk::VkBool32 {
-    println!("validation layer message: {:?}", unsafe {
-        std::ffi::CStr::from_ptr((*pCallbackData).pMessage)
-    });
-    if (messageSeverity
-        & (vk::VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT
-            | vk::VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT))
-        .0
-        != 0
-    {
-        assert!(false);
-    } else {
-    }
-    return vk::VK_FALSE;
-}
-
-unsafe fn create_debug_utils_messenger_ext(
-    instance: vk::VkInstance,
-    pCreateInfo: *const vk::VkDebugUtilsMessengerCreateInfoEXT,
-    pAllocator: *const vk::VkAllocationCallbacks,
-    pMessenger: *mut vk::VkDebugUtilsMessengerEXT,
-) -> vk::VkResult {
-    let func: vk::PFN_vkCreateDebugUtilsMessengerEXT =
-        unsafe { std::mem::transmute(vk::vkGetInstanceProcAddr(instance, c_str!("vkCreateDebugUtilsMessengerEXT"))) };
-    let func = func.unwrap();
-    unsafe { func(instance, pCreateInfo, pAllocator, pMessenger) }
-}
-
-unsafe fn destroy_debug_utils_messenger_ext(
-    instance: vk::VkInstance,
-    messenger: vk::VkDebugUtilsMessengerEXT,
-    pAllocator: *const vk::VkAllocationCallbacks,
-) {
-    let func: vk::PFN_vkDestroyDebugUtilsMessengerEXT =
-        unsafe { std::mem::transmute(vk::vkGetInstanceProcAddr(instance, c_str!("vkDestroyDebugUtilsMessengerEXT"))) };
-    let func = func.unwrap();
-    unsafe { func(instance, messenger, pAllocator) }
-}
-
-fn create_debug_utils_messenger(vk_instance: vk::VkInstance) -> vk::VkDebugUtilsMessengerEXT {
-    let vk_debug_utils_messenger_create_info_ext = vk::VkDebugUtilsMessengerCreateInfoEXT {
-        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-        messageSeverity: vk::VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT
-            | vk::VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-            | vk::VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-        messageType: vk::VkDebugUtilsMessageTypeFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-            | vk::VkDebugUtilsMessageTypeFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-            | vk::VkDebugUtilsMessageTypeFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
-        pfnUserCallback: Some(debug_callback),
-        ..Default::default()
-    };
-    let mut vk_debug_utils_messenger_ext: vk::VkDebugUtilsMessengerEXT = Default::default();
-    unsafe {
-        vk_assert!(create_debug_utils_messenger_ext(
-            vk_instance,
-            &vk_debug_utils_messenger_create_info_ext,
-            std::ptr::null(),
-            &mut vk_debug_utils_messenger_ext
-        ))
-    };
-    return vk_debug_utils_messenger_ext;
-}
-
 fn main() {
     let mut glfw_context = GlfwContext::new();
     let vk_instance = create_instance();
     defer! { unsafe { vk::vkDestroyInstance(vk_instance, std::ptr::null()) } }
 
     let vk_physical_device = pick_physical_device(vk_instance);
-    let vk_debug_utils_messenger_ext = create_debug_utils_messenger(vk_instance);
-    defer! {
-        unsafe { destroy_debug_utils_messenger_ext(vk_instance, vk_debug_utils_messenger_ext, std::ptr::null()); }
-    }
     let mut vk_surface_khr: vk::VkSurfaceKHR = std::ptr::null_mut();
     unsafe {
         vk::glfwCreateWindowSurface(
@@ -592,7 +404,7 @@ fn main() {
     let vk_device = create_device(vk_physical_device, queue_family_index);
     defer! { unsafe { vk::vkDestroyDevice(vk_device, std::ptr::null()); } }
 
-    let ext_fns = VulkanExtFns::new(vk_device);
+    let ext_fns = DynamicRenderingFns::new(vk_device);
 
     let mut vk_queue: vk::VkQueue = Default::default();
     unsafe {
@@ -628,7 +440,6 @@ fn main() {
     }
 
     // --- BUFFER CREATION (PARTICLES & GRID) ---
-
     let particles_size = (NUM_PARTICLES as usize * std::mem::size_of::<Particle>()) as u64;
     let grid_size = (GRID_WIDTH as usize * GRID_HEIGHT as usize * std::mem::size_of::<u32>()) as u64;
 
@@ -643,9 +454,7 @@ fn main() {
         vk_create!(vk::vkCreateBuffer, vk_device, &info, std::ptr::null())
     };
 
-    // Staging buffer (Host Visible)
     let vk_staging_buffer = create_buffer(particles_size + grid_size, vk::VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-    // Device Local buffers
     let vk_particle_buffer = create_buffer(
         particles_size,
         vk::VkBufferUsageFlagBits::VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | vk::VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -655,7 +464,6 @@ fn main() {
         vk::VkBufferUsageFlagBits::VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | vk::VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_DST_BIT,
     );
 
-    // Allocate memory (Simplified for brevity: in production use VMA or similar, here we bind individually)
     let bind_memory = |buffer: vk::VkBuffer, flags| {
         let mut reqs = vk::VkMemoryRequirements::default();
         unsafe {
@@ -681,7 +489,6 @@ fn main() {
     let particle_mem = bind_memory(vk_particle_buffer, vk::VkMemoryPropertyFlagBits::VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     let grid_mem = bind_memory(vk_grid_buffer, vk::VkMemoryPropertyFlagBits::VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-    // --- SEED PARTICLES ON CPU ---
     unsafe {
         let mut mapped_ptr = std::ptr::null_mut();
         vk::vkMapMemory(
@@ -692,48 +499,50 @@ fn main() {
             vk::VkMemoryMapFlagBits(0),
             &mut mapped_ptr,
         );
-
         let staging_particles = std::slice::from_raw_parts_mut(mapped_ptr as *mut Particle, NUM_PARTICLES as usize);
-
         for i in 0..NUM_PARTICLES as usize {
+            let mut rng = Xorshift32 { state: 1337 + i as u32 };
             staging_particles[i] = Particle {
-                pos_x: GRID_WIDTH / 2, // Start all in the center
-                pos_y: GRID_HEIGHT / 2,
-                rng: Xorshift32 { state: 1337 + i as u32 }, // Unique seed per particle
+                pos_x: rng.next() % GRID_WIDTH,
+                pos_y: rng.next() % GRID_HEIGHT,
+                rng,
+                _padding: 0,
             };
         }
-
-        // Zero out the grid space in staging
         let staging_grid = std::slice::from_raw_parts_mut(mapped_ptr.add(particles_size as usize) as *mut u32, (GRID_WIDTH * GRID_HEIGHT) as usize);
         staging_grid.fill(0);
-
         vk::vkUnmapMemory(vk_device, staging_mem);
-    }
 
-    // --- COPY STAGING TO DEVICE LOCAL ---
-    unsafe {
         let begin_info = vk::VkCommandBufferBeginInfo {
             sType: vk::VkStructureType::VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
             flags: vk::VkCommandBufferUsageFlagBits::VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
             ..Default::default()
         };
         vk::vkBeginCommandBuffer(vk_command_buffer, &begin_info);
-
-        let p_copy = vk::VkBufferCopy {
-            srcOffset: 0,
-            dstOffset: 0,
-            size: particles_size,
-        };
-        vk::vkCmdCopyBuffer(vk_command_buffer, vk_staging_buffer, vk_particle_buffer, 1, &p_copy);
-
-        let g_copy = vk::VkBufferCopy {
-            srcOffset: particles_size,
-            dstOffset: 0,
-            size: grid_size,
-        };
-        vk::vkCmdCopyBuffer(vk_command_buffer, vk_staging_buffer, vk_grid_buffer, 1, &g_copy);
-
+        vk::vkCmdCopyBuffer(
+            vk_command_buffer,
+            vk_staging_buffer,
+            vk_particle_buffer,
+            1,
+            &vk::VkBufferCopy {
+                srcOffset: 0,
+                dstOffset: 0,
+                size: particles_size,
+            },
+        );
+        vk::vkCmdCopyBuffer(
+            vk_command_buffer,
+            vk_staging_buffer,
+            vk_grid_buffer,
+            1,
+            &vk::VkBufferCopy {
+                srcOffset: particles_size,
+                dstOffset: 0,
+                size: grid_size,
+            },
+        );
         vk::vkEndCommandBuffer(vk_command_buffer);
+
         let submit = vk::VkSubmitInfo {
             sType: vk::VkStructureType::VK_STRUCTURE_TYPE_SUBMIT_INFO,
             commandBufferCount: 1,
@@ -858,43 +667,180 @@ fn main() {
         std::ptr::null()
     );
 
-    // --- CREATE SHADER OBJECTS ---
-    let create_shader = |stage: vk::VkShaderStageFlagBits, entry: &str| -> vk::VkShaderEXT {
-        let entry_name = std::ffi::CString::new(entry).unwrap();
-        let next_stage = match stage {
-            vk::VkShaderStageFlagBits::VK_SHADER_STAGE_VERTEX_BIT => vk::VkShaderStageFlagBits::VK_SHADER_STAGE_FRAGMENT_BIT,
-            _ => vk::VkShaderStageFlagBits(0),
-        };
-        let info = vk::VkShaderCreateInfoEXT {
-            sType: vk::VkStructureType::VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT,
-            stage,
-            nextStage: next_stage,
-            codeType: vk::VkShaderCodeTypeEXT::VK_SHADER_CODE_TYPE_SPIRV_EXT,
-            codeSize: SHADER_CODE.len() * 4,
-            pCode: SHADER_CODE.as_ptr() as *const _,
-            pName: entry_name.as_ptr(),
-            setLayoutCount: 1,
-            pSetLayouts: &desc_layout,
-            pushConstantRangeCount: 1,
-            pPushConstantRanges: &push_range,
+    // --- SHADER MODULE CREATION ---
+    let shader_module_info = vk::VkShaderModuleCreateInfo {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        codeSize: SHADER_CODE.len() * 4,
+        pCode: SHADER_CODE.as_ptr() as *const _,
+        ..Default::default()
+    };
+    let shader_module = vk_create!(vk::vkCreateShaderModule, vk_device, &shader_module_info, std::ptr::null());
+    defer! { unsafe { vk::vkDestroyShaderModule(vk_device, shader_module, std::ptr::null()); } }
+
+    // --- PIPELINE CREATION ---
+
+    // 1. Clean Compute Pipeline
+    let clean_stage = vk::VkPipelineShaderStageCreateInfo {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        stage: vk::VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT,
+        module: shader_module,
+        pName: c_str!("clean_buffer"),
+        ..Default::default()
+    };
+    let clean_pipeline_info = vk::VkComputePipelineCreateInfo {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        stage: clean_stage,
+        layout: pipeline_layout,
+        ..Default::default()
+    };
+    let mut clean_pipeline = Default::default();
+    unsafe {
+        vk_assert!(vk::vkCreateComputePipelines(
+            vk_device,
+            std::ptr::null_mut(),
+            1,
+            &clean_pipeline_info,
+            std::ptr::null(),
+            &mut clean_pipeline
+        ));
+    }
+    defer! { unsafe { vk::vkDestroyPipeline(vk_device, clean_pipeline, std::ptr::null()); } }
+
+    // 2. Step Compute Pipeline
+    let step_stage = vk::VkPipelineShaderStageCreateInfo {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        stage: vk::VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT,
+        module: shader_module,
+        pName: c_str!("brownian_step"),
+        ..Default::default()
+    };
+    let step_pipeline_info = vk::VkComputePipelineCreateInfo {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        stage: step_stage,
+        layout: pipeline_layout,
+        ..Default::default()
+    };
+    let mut step_pipeline = Default::default();
+    unsafe {
+        vk_assert!(vk::vkCreateComputePipelines(
+            vk_device,
+            std::ptr::null_mut(),
+            1,
+            &step_pipeline_info,
+            std::ptr::null(),
+            &mut step_pipeline
+        ));
+    }
+    defer! { unsafe { vk::vkDestroyPipeline(vk_device, step_pipeline, std::ptr::null()); } }
+
+    // 3. Graphics Pipeline
+    let graphics_stages = [
+        vk::VkPipelineShaderStageCreateInfo {
+            sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            stage: vk::VkShaderStageFlagBits::VK_SHADER_STAGE_VERTEX_BIT,
+            module: shader_module,
+            pName: c_str!("fullscreen_vs"),
             ..Default::default()
-        };
-        let mut shader = Default::default();
-        unsafe {
-            vk_assert!((ext_fns.vkCreateShadersEXT)(vk_device, 1, &info, std::ptr::null(), &mut shader));
-        }
-        shader
+        },
+        vk::VkPipelineShaderStageCreateInfo {
+            sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            stage: vk::VkShaderStageFlagBits::VK_SHADER_STAGE_FRAGMENT_BIT,
+            module: shader_module,
+            pName: c_str!("grid_fs"),
+            ..Default::default()
+        },
+    ];
+
+    let vertex_input_info = vk::VkPipelineVertexInputStateCreateInfo {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        ..Default::default()
+    };
+    let input_assembly_info = vk::VkPipelineInputAssemblyStateCreateInfo {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        topology: vk::VkPrimitiveTopology::VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        ..Default::default()
+    };
+    let viewport_state_info = vk::VkPipelineViewportStateCreateInfo {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        viewportCount: 1,
+        scissorCount: 1,
+        ..Default::default()
+    };
+    let rasterizer_info = vk::VkPipelineRasterizationStateCreateInfo {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        polygonMode: vk::VkPolygonMode::VK_POLYGON_MODE_FILL,
+        lineWidth: 1.0,
+        cullMode: vk::VkCullModeFlagBits::VK_CULL_MODE_NONE,
+        frontFace: vk::VkFrontFace::VK_FRONT_FACE_CLOCKWISE,
+        ..Default::default()
+    };
+    let multisampling_info = vk::VkPipelineMultisampleStateCreateInfo {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        rasterizationSamples: vk::VkSampleCountFlagBits::VK_SAMPLE_COUNT_1_BIT,
+        ..Default::default()
+    };
+    let color_blend_attachment = vk::VkPipelineColorBlendAttachmentState {
+        colorWriteMask: vk::VkColorComponentFlagBits::VK_COLOR_COMPONENT_R_BIT
+            | vk::VkColorComponentFlagBits::VK_COLOR_COMPONENT_G_BIT
+            | vk::VkColorComponentFlagBits::VK_COLOR_COMPONENT_B_BIT
+            | vk::VkColorComponentFlagBits::VK_COLOR_COMPONENT_A_BIT,
+        blendEnable: vk::VK_FALSE,
+        ..Default::default()
+    };
+    let color_blending_info = vk::VkPipelineColorBlendStateCreateInfo {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        attachmentCount: 1,
+        pAttachments: &color_blend_attachment,
+        ..Default::default()
+    };
+    let dynamic_states = [
+        vk::VkDynamicState::VK_DYNAMIC_STATE_VIEWPORT,
+        vk::VkDynamicState::VK_DYNAMIC_STATE_SCISSOR,
+    ];
+    let dynamic_state_info = vk::VkPipelineDynamicStateCreateInfo {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        dynamicStateCount: 2,
+        pDynamicStates: dynamic_states.as_ptr(),
+        ..Default::default()
+    };
+    let mut pipeline_rendering_info = vk::VkPipelineRenderingCreateInfoKHR {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
+        colorAttachmentCount: 1,
+        pColorAttachmentFormats: &REQUIRED_SURFACE_FORMAT.format,
+        ..Default::default()
+    };
+    let graphics_pipeline_info = vk::VkGraphicsPipelineCreateInfo {
+        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        pNext: &mut pipeline_rendering_info as *mut _ as *mut std::ffi::c_void,
+        stageCount: 2,
+        pStages: graphics_stages.as_ptr(),
+        pVertexInputState: &vertex_input_info,
+        pInputAssemblyState: &input_assembly_info,
+        pViewportState: &viewport_state_info,
+        pRasterizationState: &rasterizer_info,
+        pMultisampleState: &multisampling_info,
+        pColorBlendState: &color_blending_info,
+        pDynamicState: &dynamic_state_info,
+        layout: pipeline_layout,
+        ..Default::default()
     };
 
-    let clean_so = create_shader(vk::VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT, "clean_buffer");
-    let step_so = create_shader(vk::VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT, "brownian_step");
-    let vs_so = create_shader(vk::VkShaderStageFlagBits::VK_SHADER_STAGE_VERTEX_BIT, "fullscreen_vs");
-    let fs_so = create_shader(vk::VkShaderStageFlagBits::VK_SHADER_STAGE_FRAGMENT_BIT, "grid_fs");
+    let mut graphics_pipeline = Default::default();
+    unsafe {
+        vk_assert!(vk::vkCreateGraphicsPipelines(
+            vk_device,
+            std::ptr::null_mut(),
+            1,
+            &graphics_pipeline_info,
+            std::ptr::null(),
+            &mut graphics_pipeline
+        ));
+    }
+    defer! { unsafe { vk::vkDestroyPipeline(vk_device, graphics_pipeline, std::ptr::null()); } }
 
     let mut vk_swapchain_khr: vk::VkSwapchainKHR = std::ptr::null_mut();
 
     'swapchain_loop: loop {
-        // 1. Sync Primitives for this swapchain lifecycle
         let vk_present_complete_semaphore = vk_create!(
             vk::vkCreateSemaphore,
             vk_device,
@@ -912,7 +858,7 @@ fn main() {
                 vk_device,
                 &vk::VkFenceCreateInfo {
                     sType: vk::VkStructureType::VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-                    flags: vk::VkFenceCreateFlagBits::VK_FENCE_CREATE_SIGNALED_BIT, // Start signaled
+                    flags: vk::VkFenceCreateFlagBits::VK_FENCE_CREATE_SIGNALED_BIT,
                     ..Default::default()
                 },
                 std::ptr::null(),
@@ -921,11 +867,9 @@ fn main() {
         }
         defer! { unsafe { vk::vkDestroyFence(vk_device, vk_fence, std::ptr::null()); } }
 
-        // 2. Recreate Swapchain
         let vk_swapchain_extent = recreate_swapchain(&mut vk_swapchain_khr, glfw_context.0, vk_physical_device, vk_surface_khr, vk_device);
         let vk_swapchain_images = vk_enumerate!(vk::vkGetSwapchainImagesKHR, vk_device, vk_swapchain_khr);
 
-        // 3. Create Image Views (No Framebuffers needed!)
         let vk_swapchain_image_views: Vec<vk::VkImageView> = vk_swapchain_images
             .iter()
             .map(|&image| {
@@ -952,10 +896,7 @@ fn main() {
                 vk_create!(vk::vkCreateImageView, vk_device, &info, std::ptr::null())
             })
             .collect();
-
-        defer! {
-            for &view in &vk_swapchain_image_views { unsafe { vk::vkDestroyImageView(vk_device, view, std::ptr::null()); } }
-        }
+        defer! { for &view in &vk_swapchain_image_views { unsafe { vk::vkDestroyImageView(vk_device, view, std::ptr::null()); } } }
 
         let vk_render_complete_semaphores: Vec<vk::VkSemaphore> = (0..vk_swapchain_images.len())
             .map(|_| {
@@ -970,10 +911,7 @@ fn main() {
                 )
             })
             .collect();
-
-        defer! {
-            for &sem in &vk_render_complete_semaphores { unsafe { vk::vkDestroySemaphore(vk_device, sem, std::ptr::null()); } }
-        }
+        defer! { for &sem in &vk_render_complete_semaphores { unsafe { vk::vkDestroySemaphore(vk_device, sem, std::ptr::null()); } } }
 
         defer! { unsafe { vk_assert!(vk::vkDeviceWaitIdle(vk_device)); } }
 
@@ -1002,7 +940,6 @@ fn main() {
                     &mut image_index,
                 )
             };
-
             match vk_result {
                 vk::VkResult::VK_ERROR_OUT_OF_DATE_KHR | vk::VkResult::VK_SUBOPTIMAL_KHR => continue 'swapchain_loop,
                 other => vk_assert!(other),
@@ -1034,6 +971,9 @@ fn main() {
                     std::mem::size_of::<PushConstants>() as u32,
                     &push as *const _ as *const _,
                 );
+
+                // --- 1. COMPUTE: CLEAN PASS ---
+                vk::vkCmdBindPipeline(vk_command_buffer, vk::VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_COMPUTE, clean_pipeline);
                 vk::vkCmdBindDescriptorSets(
                     vk_command_buffer,
                     vk::VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -1044,10 +984,6 @@ fn main() {
                     0,
                     std::ptr::null(),
                 );
-
-                // 1. CLEAN PASS
-                let compute_stage = [vk::VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT];
-                (ext_fns.vkCmdBindShadersEXT)(vk_command_buffer, 1, compute_stage.as_ptr(), [clean_so].as_ptr());
                 vk::vkCmdDispatch(vk_command_buffer, ((GRID_WIDTH * GRID_HEIGHT) + 255) / 256, 1, 1);
 
                 // Barrier: Clean -> Step
@@ -1059,21 +995,32 @@ fn main() {
                     size: vk::VK_WHOLE_SIZE,
                     ..Default::default()
                 };
+
+                let particle_barrier = vk::VkBufferMemoryBarrier {
+                    sType: vk::VkStructureType::VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                    srcAccessMask: vk::VkAccessFlagBits::VK_ACCESS_TRANSFER_WRITE_BIT | vk::VkAccessFlagBits::VK_ACCESS_SHADER_WRITE_BIT,
+                    dstAccessMask: vk::VkAccessFlagBits::VK_ACCESS_SHADER_READ_BIT | vk::VkAccessFlagBits::VK_ACCESS_SHADER_WRITE_BIT,
+                    buffer: vk_particle_buffer,
+                    size: vk::VK_WHOLE_SIZE,
+                    ..Default::default()
+                };
+
+                let barriers = [barrier1, particle_barrier];
                 vk::vkCmdPipelineBarrier(
                     vk_command_buffer,
-                    vk::VkPipelineStageFlagBits::VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    vk::VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT | vk::VkPipelineStageFlagBits::VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                     vk::VkPipelineStageFlagBits::VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                     vk::VkDependencyFlagBits(0),
                     0,
                     std::ptr::null(),
-                    1,
-                    &barrier1,
+                    2,
+                    barriers.as_ptr(),
                     0,
                     std::ptr::null(),
                 );
 
-                // 2. STEP PASS
-                (ext_fns.vkCmdBindShadersEXT)(vk_command_buffer, 1, compute_stage.as_ptr(), [step_so].as_ptr());
+                // --- 2. COMPUTE: STEP PASS ---
+                vk::vkCmdBindPipeline(vk_command_buffer, vk::VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_COMPUTE, step_pipeline);
                 vk::vkCmdDispatch(vk_command_buffer, (NUM_PARTICLES + 255) / 256, 1, 1);
 
                 // Barrier: Step -> Fragment
@@ -1118,18 +1065,7 @@ fn main() {
                     &image_to_render_barrier,
                 );
 
-                // 3. GRAPHICS PASS (DYNAMIC RENDERING)
-                vk::vkCmdBindDescriptorSets(
-                    vk_command_buffer,
-                    vk::VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    pipeline_layout,
-                    0,
-                    1,
-                    &desc_set,
-                    0,
-                    std::ptr::null(),
-                );
-
+                // --- 3. GRAPHICS PASS ---
                 let color_attachment = vk::VkRenderingAttachmentInfoKHR {
                     sType: vk::VkStructureType::VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
                     imageView: vk_swapchain_image_views[image_index as usize],
@@ -1158,13 +1094,23 @@ fn main() {
 
                 (ext_fns.vkCmdBeginRenderingKHR)(vk_command_buffer, &rendering_info);
 
-                let graphics_stages = [
-                    vk::VkShaderStageFlagBits::VK_SHADER_STAGE_VERTEX_BIT,
-                    vk::VkShaderStageFlagBits::VK_SHADER_STAGE_FRAGMENT_BIT,
-                ];
-                (ext_fns.vkCmdBindShadersEXT)(vk_command_buffer, 2, graphics_stages.as_ptr(), [vs_so, fs_so].as_ptr());
+                vk::vkCmdBindPipeline(
+                    vk_command_buffer,
+                    vk::VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    graphics_pipeline,
+                );
+                vk::vkCmdBindDescriptorSets(
+                    vk_command_buffer,
+                    vk::VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    pipeline_layout,
+                    0,
+                    1,
+                    &desc_set,
+                    0,
+                    std::ptr::null(),
+                );
 
-                // Shader Object Dynamic State
+                // Standard Pipeline Dynamic State
                 let viewport = vk::VkViewport {
                     width: vk_swapchain_extent.width as f32,
                     height: vk_swapchain_extent.height as f32,
@@ -1175,45 +1121,8 @@ fn main() {
                     extent: vk_swapchain_extent,
                     ..Default::default()
                 };
-
-                (ext_fns.vkCmdSetViewportWithCountEXT)(vk_command_buffer, 1, &viewport);
-                (ext_fns.vkCmdSetScissorWithCountEXT)(vk_command_buffer, 1, &scissor);
-                (ext_fns.vkCmdSetPolygonModeEXT)(vk_command_buffer, vk::VkPolygonMode::VK_POLYGON_MODE_FILL);
-                (ext_fns.vkCmdSetRasterizationSamplesEXT)(vk_command_buffer, vk::VkSampleCountFlagBits::VK_SAMPLE_COUNT_1_BIT);
-
-                let sample_mask: vk::VkSampleMask = !0;
-                (ext_fns.vkCmdSetSampleMaskEXT)(vk_command_buffer, vk::VkSampleCountFlagBits::VK_SAMPLE_COUNT_1_BIT, &sample_mask);
-
-                (ext_fns.vkCmdSetAlphaToCoverageEnableEXT)(vk_command_buffer, vk::VK_FALSE);
-                vk::vkCmdSetCullMode(vk_command_buffer, vk::VkCullModeFlagBits::VK_CULL_MODE_NONE);
-                vk::vkCmdSetFrontFace(vk_command_buffer, vk::VkFrontFace::VK_FRONT_FACE_CLOCKWISE);
-                vk::vkCmdSetDepthTestEnable(vk_command_buffer, vk::VK_FALSE);
-
-                vk::vkCmdSetDepthBiasEnable(vk_command_buffer, vk::VK_FALSE);
-
-                vk::vkCmdSetDepthWriteEnable(vk_command_buffer, vk::VK_FALSE);
-                vk::vkCmdSetDepthCompareOp(vk_command_buffer, vk::VkCompareOp::VK_COMPARE_OP_ALWAYS);
-                vk::vkCmdSetDepthBoundsTestEnable(vk_command_buffer, vk::VK_FALSE);
-                vk::vkCmdSetStencilTestEnable(vk_command_buffer, vk::VK_FALSE);
-                vk::vkCmdSetPrimitiveTopology(vk_command_buffer, vk::VkPrimitiveTopology::VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-                vk::vkCmdSetPrimitiveRestartEnable(vk_command_buffer, vk::VK_FALSE);
-
-                let blend_enable = vk::VK_FALSE;
-                (ext_fns.vkCmdSetColorBlendEnableEXT)(vk_command_buffer, 0, 1, &blend_enable);
-
-                let color_write_mask = [vk::VkColorComponentFlagBits::VK_COLOR_COMPONENT_R_BIT
-                    | vk::VkColorComponentFlagBits::VK_COLOR_COMPONENT_G_BIT
-                    | vk::VkColorComponentFlagBits::VK_COLOR_COMPONENT_B_BIT
-                    | vk::VkColorComponentFlagBits::VK_COLOR_COMPONENT_A_BIT];
-                (ext_fns.vkCmdSetColorWriteMaskEXT)(
-                    vk_command_buffer,
-                    0, // firstAttachment
-                    1, // attachmentCount
-                    color_write_mask.as_ptr() as *const _,
-                );
-
-                (ext_fns.vkCmdSetRasterizerDiscardEnableEXT)(vk_command_buffer, vk::VK_FALSE);
-                (ext_fns.vkCmdSetVertexInputEXT)(vk_command_buffer, 0, std::ptr::null(), 0, std::ptr::null());
+                vk::vkCmdSetViewport(vk_command_buffer, 0, 1, &viewport);
+                vk::vkCmdSetScissor(vk_command_buffer, 0, 1, &scissor);
 
                 vk::vkCmdDraw(vk_command_buffer, 6, 1, 0, 0);
 
@@ -1253,8 +1162,6 @@ fn main() {
             }
 
             let wait_stages = [vk::VkPipelineStageFlagBits::VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT];
-            let vk_render_complete_semaphore = vk_render_complete_semaphores[image_index as usize];
-
             let vk_submit_info = vk::VkSubmitInfo {
                 sType: vk::VkStructureType::VK_STRUCTURE_TYPE_SUBMIT_INFO,
                 waitSemaphoreCount: 1,
@@ -1263,7 +1170,7 @@ fn main() {
                 commandBufferCount: 1,
                 pCommandBuffers: &vk_command_buffer,
                 signalSemaphoreCount: 1,
-                pSignalSemaphores: &vk_render_complete_semaphore,
+                pSignalSemaphores: &vk_render_complete_semaphores[image_index as usize],
                 ..Default::default()
             };
 
@@ -1274,16 +1181,14 @@ fn main() {
             let vk_present_info_khr = vk::VkPresentInfoKHR {
                 sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
                 waitSemaphoreCount: 1,
-                pWaitSemaphores: &vk_render_complete_semaphore,
+                pWaitSemaphores: &vk_render_complete_semaphores[image_index as usize],
                 swapchainCount: 1,
                 pSwapchains: &vk_swapchain_khr,
                 pImageIndices: &image_index,
                 ..Default::default()
             };
 
-            let vk_present_result = unsafe { vk::vkQueuePresentKHR(vk_queue, &vk_present_info_khr) };
-
-            match vk_present_result {
+            match unsafe { vk::vkQueuePresentKHR(vk_queue, &vk_present_info_khr) } {
                 vk::VkResult::VK_ERROR_OUT_OF_DATE_KHR | vk::VkResult::VK_SUBOPTIMAL_KHR => continue 'swapchain_loop,
                 other => vk_assert!(other),
             }

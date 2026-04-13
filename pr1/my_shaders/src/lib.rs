@@ -11,7 +11,6 @@ pub struct Xorshift32 {
 impl Xorshift32 {
     pub fn next(&mut self) -> u32 {
         let mut x = self.state;
-        // Xorshift32 algorithm: extremely fast on GPU ALUs
         x ^= x << 13;
         x ^= x >> 17;
         x ^= x << 5;
@@ -20,11 +19,13 @@ impl Xorshift32 {
     }
 }
 
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Particle {
     pub pos_x: u32,
     pub pos_y: u32,
-    pub rng: Xorshift32, // Now only 4 bytes instead of 16 bytes!
+    pub rng: Xorshift32,
+    pub _padding: u32,
 }
 
 #[repr(C)]
@@ -49,7 +50,6 @@ pub fn clean_buffer(
     }
 }
 
-// --- COMPUTE 2: BROWNIAN MOTION ---
 #[spirv(compute(threads(256)))]
 pub fn brownian_step(
     #[spirv(global_invocation_id)] id: UVec3,
@@ -63,7 +63,8 @@ pub fn brownian_step(
     }
 
     let mut p = particles[idx];
-    let dir = p.rng.next() % 4;
+
+    let dir = p.rng.next() >> 30;
 
     let mut x = p.pos_x as i32;
     let mut y = p.pos_y as i32;
@@ -101,7 +102,6 @@ pub fn brownian_step(
     }
 }
 
-// --- VERTEX: FULLSCREEN QUAD ---
 #[spirv(vertex)]
 pub fn fullscreen_vs(#[spirv(vertex_index)] vert_id: i32, #[spirv(position)] out_pos: &mut Vec4, #[spirv(location = 0)] out_uv: &mut Vec2) {
     const POSITIONS: [Vec4; 6] = [
@@ -117,13 +117,12 @@ pub fn fullscreen_vs(#[spirv(vertex_index)] vert_id: i32, #[spirv(position)] out
     *out_uv = Vec2::new(pos.z, pos.w);
 }
 
-// --- FRAGMENT: RENDER GRID DENSITY ---
 #[spirv(fragment)]
 pub fn grid_fs(
     #[spirv(location = 0)] in_uv: Vec2,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] grid: &[u32],
     #[spirv(push_constant)] constants: &PushConstants,
-    out_color: &mut Vec4,
+    #[spirv(location = 0)] out_color: &mut Vec4,
 ) {
     let x = ((in_uv.x * constants.grid_width as f32) as u32).min(constants.grid_width - 1);
     let y = ((in_uv.y * constants.grid_height as f32) as u32).min(constants.grid_height - 1);
