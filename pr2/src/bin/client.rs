@@ -9,48 +9,64 @@ use tokio::net::TcpStream;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    print!("Enter your nickname: ");
+    print!("Enter your unique nickname: ");
     stdout().flush()?;
     let mut nickname = String::new();
     std::io::stdin().read_line(&mut nickname)?;
 
-    let mut stream = TcpStream::connect("127.0.0.1:8080").await?;
-    let (reader, mut writer) = stream.split();
+    let stream = TcpStream::connect("127.0.0.1:8080").await?;
+    let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut stdin_reader = BufReader::new(tokio::io::stdin());
 
     writer.write_all(nickname.as_bytes()).await?;
-
     let mut auth_resp = String::new();
     reader.read_line(&mut auth_resp).await?;
+
     if auth_resp.trim() == "TAKEN" {
         println!(
             "{}",
-            "Error: Nickname is already in use. Try another one."
-                .red()
-                .bold()
+            "Error: Nickname is active. Disconnecting.".red().bold()
         );
         return Ok(());
     }
 
-    // 2. UI Initialization Phase
     execute!(
         stdout(),
         terminal::Clear(terminal::ClearType::All),
         cursor::MoveTo(0, 0)
     )?;
 
-    println!(
-        "{}",
-        " --- Distributed Parallel Chat System --- ".bold().cyan()
-    );
+    println!("{}", " --- Distributed Chat System --- ".bold().cyan());
     println!(
         "{}",
         format!("Logged in as: {}", nickname.trim())
             .italic()
             .dark_grey()
     );
-    println!("{}", "=".repeat(50).dark_grey());
+    println!("{}", "Commands:".yellow());
+    println!(
+        "{}",
+        "  <text>                - Sends to 'global' group".dark_grey()
+    );
+    println!(
+        "{}",
+        "  /join <group>         - Join a new or existing group".dark_grey()
+    );
+    println!("{}", "  /leave <group>        - Leave a group".dark_grey());
+    println!(
+        "{}",
+        "  /list <group>         - View active members in a group".dark_grey()
+    );
+    println!(
+        "{}",
+        "  /g <group> <text>     - Message a specific group".dark_grey()
+    );
+    println!(
+        "{}",
+        "  /msg <user> <text>    - Send a private direct message".dark_grey()
+    );
+    println!("{}", "=".repeat(60).dark_grey());
 
     loop {
         execute!(
@@ -68,35 +84,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             res = reader.read_line(&mut server_msg) => {
                 if res.unwrap_or(0) == 0 { break; }
 
-                execute!(
-                    stdout(),
-                    cursor::MoveToColumn(0),
-                    terminal::Clear(terminal::ClearType::CurrentLine)
-                )?;
+                execute!(stdout(), cursor::MoveToColumn(0), terminal::Clear(terminal::ClearType::CurrentLine))?;
 
-                if server_msg.starts_with("***") {
-                    println!("{}", server_msg.trim().yellow());
+                let msg = server_msg.trim();
+                if msg.starts_with("*** System:") {
+                    println!("{}", msg.yellow());
+                } else if msg.starts_with("[Private") {
+                    println!("{}", msg.magenta().bold());
+                } else if msg.starts_with("[Group:") {
+                    // Differentiate global from other groups visually
+                    if msg.starts_with("[Group: global]") {
+                        println!("{}", msg.white());
+                    } else {
+                        println!("{}", msg.cyan());
+                    }
                 } else {
-                    print!("{}", "Msg | ".magenta().bold());
-                    println!("{}", server_msg.trim());
+                    println!("{}", msg);
                 }
-                println!("{}", "-".repeat(30).dark_grey());
             }
-
             res = stdin_reader.read_line(&mut user_input) => {
                 if res.is_ok() && !user_input.trim().is_empty() {
                     writer.write_all(user_input.as_bytes()).await?;
-
-                    execute!(
-                        stdout(),
-                        cursor::MoveUp(1),
-                        cursor::MoveToColumn(0),
-                        terminal::Clear(terminal::ClearType::CurrentLine)
-                    )?;
-
-                    print!("{}", "You | ".blue().bold());
-                    println!("{}", user_input.trim());
-                    println!("{}", "-".repeat(30).dark_grey());
+                    execute!(stdout(), cursor::MoveUp(1), cursor::MoveToColumn(0), terminal::Clear(terminal::ClearType::CurrentLine))?;
                 }
             }
         }
@@ -104,9 +113,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     execute!(
         stdout(),
-        terminal::Clear(terminal::ClearType::All),
-        cursor::MoveTo(0, 0)
+        cursor::MoveToColumn(0),
+        terminal::Clear(terminal::ClearType::CurrentLine)
     )?;
-    println!("Disconnected from server.");
+    println!("{}", "Disconnected from server.".red());
     Ok(())
 }
