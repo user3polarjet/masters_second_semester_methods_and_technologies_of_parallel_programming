@@ -1,0 +1,60 @@
+Methodological instructions for the implementation of educational projects from the course "Methods and technologies of parallel programming"
+Educational project No. 1. "Modeling Brownian motion using multithreaded programming"
+
+Project goal
+• To master parallelism models
+• Learn to work with parallel simulations
+• To investigate the problems of synchronization and data sharing
+• To analyze the performance of the proposed approach
+
+Description of the applied problem.
+
+The process of Brownian motion of impurity particles in a two-dimensional crystal, represented as a grid size, is considered. Particles are placed in the crystal, which provide random movement between neighboring cells (up, down, left, right) with certain probabilities. The basic rules for particle transition: at each time step, a particle chooses the direction of movement randomly; if a particle reaches the boundary and moves towards the boundary, it is reflected, that is, it remains in place (or use another strategy). There can be several particles in a skin cell, but the total number of particles is preserved.
+
+General requirements
+
+It is necessary to change the behavior of particles in a two-dimensional crystal using multi-threaded programming), using a thread of execution for each impurity atom. The result of the simulation work is a set of "snapshots" that characterize the state of the distribution of impurity particles in the crystal cells from the beginning to the end of the simulation term with a given discreteness of the state display step.
+Each particle simulation thread in each simulation act must generate a random number, according to which a decision is made to move to the next cell according to given probabilities. During the program, current problems related to the features of the interaction of threads and data sharing are triggered. It is possible to demonstrate the existence of these problems, propose a solution, and show how this solution adds to the problem.
+The programming language, frameworks, and auxiliary elements (for example, to provide visualization) are processed at the student's discretion.
+Potential problems
+
+• Multiple threads modify one cell, resulting in lost particles or incorrect value, i.e. race condition problem
+• Deadlock: threads block each other
+• Thread overload: one thread on one part scales poorly
+• Random number generation: access to the random number generator is a bottleneck
+• Lack of consistency of snapshots: crystal state is read during modification
+
+Potential solutions
+
+• Use of mutex, lock, atomic operations
+• Global lock acquisition order
+• Use of a lock-free structure
+• task pool, fragmentation, barrier, immutable snapshot
+
+Example of project implementation:
+
+1) The crystal mesh, number of atoms and chances of atom transition are given;
+2) The simulation time and discretization of the created snapshots are given;
+3) an impurity skin atom corresponds to an execution thread, which contains the impurity atom index. The work of the flow occurs in the modification of the crystal array and changes its index;
+4) The simulation is started, receives a given number of snapshots, stops;
+5) At the end, the number of impurities before the start of the simulation and after is compared.
+
+Comment on the implementation:
+
+Students can propose their own implementation of the project, methods or elements of the program or task, if they better demonstrate the problems with the use of multi-power, or if these innovations solve the simulation problem better. All proposals and deviations from must be described and justified.
+
+Mandatory requirements:
+
+The program must implement the process of modeling the movement of atoms in the crystal, make snapshots of the crystal state and demonstrate the existing problems of multi-power and their solutions. At the end, the program must calculate the number of impurities in the crystal and display the result.
+Project implementation options and requirements:
+
+To simplify the defense process, you can implement only part of the project, or the entire project to obtain the maximum score. Partial solution does not accept the solution of visualization and two-dimensional crystal. A full solution must include one with the solution of complex problems.
+1) Full project (15 points):
+• implement simulation of Brownian motion with visualization in a two-dimensional crystal;
+• implement the correct mechanism for obtaining casts of the crystal state;
+• show the problems of deadlock and race conditions, demonstrate the solution
+• Implement one of the complex problems:
+1) The seed problem and ensuring the reproducibility of simulations is providing a multi-threaded solution for integrating random numbers into the process of solving particle motion;
+2) ensuring the receipt of an accurate cast without stopping the simulation;
+3) Ensuring the scaling process for atoms, i.e. solving the problem of 1 atom = 1 thread.
+• conduct a comprehensive analysis of the results, the impact of resource allocation of one thread on the skin part, the choice of initial parameters, the problem of parallelism that arose and describe the proposed

@@ -1,0 +1,51 @@
+1) spirv-reflect
+2) vulkan amd memory allocator
+3) bindless architecture
+4) dynamic rendering
+5)
+
+Since you are committed to writing raw Vulkan FFI and avoiding high-level Rust wrappers, your best path to a maintainable codebase is leaning heavily into modern Vulkan (1.2/1.3) features and extensions. These updates were specifically designed by Khronos to fix the exact boilerplate nightmares you are experiencing.
+
+Here are the next biggest leaps you can make to modernize your engine and cut down on raw C-style plumbing.
+1. Kill VkPipeline Entirely: Shader Objects (VK_EXT_shader_object)
+
+If Dynamic Rendering kills VkRenderPass, Shader Objects kill VkPipeline.
+
+In Vulkan 1.0, if you change a blend state, a vertex layout, or a shader, you have to bake an entirely new Pipeline State Object (PSO). This is slow, rigid, and requires massive boilerplate structs (as seen in your create_graphics_pipeline function).
+
+The Modern Way:
+With VK_EXT_shader_object (introduced in mid-2023), you simply create a VkShaderEXT directly from your SPIR-V code. At draw time, you just set your state dynamically and bind the shader.
+
+No more pipeline baking. Rapid iteration becomes trivial because your shaders and pipeline states are completely decoupled.
+2. Unify CPU/GPU Threading: Timeline Semaphores (Vulkan 1.2)
+
+You have a heavily asynchronous architecture (Tokio threads handling V4L2 streams, trackers, and Vulkan). Using Vulkan 1.0 VkFence (for CPU-GPU sync) and binary VkSemaphore (for GPU-GPU sync) across threads is a fast track to deadlocks.
+
+The Modern Way:
+Timeline Semaphores (VK_KHR_timeline_semaphore, core in 1.2) replace both fences and binary semaphores with a single, monotonically increasing 64-bit integer.
+
+    It acts like a thread-safe atomic counter.
+
+    The GPU can signal it: "I finished frame 5."
+
+    The CPU can wait on it: vkWaitSemaphores(device, &sema, 5, timeout);
+
+    The CPU can signal it: "Hey GPU, V4L2 buffer 6 is ready."
+
+    You can share this single integer counter across all your Tokio tasks, V4L2 threads, and Vulkan queues.
+
+3. Stop Guessing Pipeline Stages: Synchronization2 (Vulkan 1.3)
+
+In your commented-out code, you have VkImageMemoryBarrier. Vulkan 1.0 barriers are notoriously difficult because you have to perfectly align srcStageMask with srcAccessMask, and getting it wrong results in silent hazards or validation layer screaming.
+
+The Modern Way:
+You are already enabling synchronization2: 1 in your device creation, so you should exclusively use vkCmdPipelineBarrier2.
+It bundles the stage and access masks together into VkMemoryBarrier2 structs. You explicitly state: "I was doing X in the Compute stage, now I want to do Y in the Fragment stage." It makes layout transitions and queue ownership transfers highly readable and much harder to get wrong.
+4. Skip Descriptor Sets for One-Offs: Push Descriptors
+
+Even with a bindless architecture for your main arrays, sometimes you just need to pass a single temporary buffer or image to a compute shader without managing a descriptor pool for it.
+
+The Modern Way:
+Using VK_KHR_push_descriptor, you can bypass VkDescriptorSet allocation entirely. You bind the data directly into the command buffer, exactly like a Push Constant, but for textures and buffers.
+
+    The strategic view: By combining Bindless (no descriptor sets), Dynamic Rendering (no render passes), and Shader Objects (no pipelines), you effectively strip Vulkan down to a pure command-streaming API. You map memory, bind a shader, push an index, and draw.
