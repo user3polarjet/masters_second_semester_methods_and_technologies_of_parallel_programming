@@ -464,8 +464,12 @@ fn main() {
     );
     let vk_grid_buffer = create_buffer(
         grid_size,
-        vk::VkBufferUsageFlagBits::VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | vk::VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        vk::VkBufferUsageFlagBits::VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+            | vk::VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_DST_BIT
+            | vk::VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_SRC_BIT, // Added SRC_BIT
     );
+
+    let vk_readback_buffer = create_buffer(grid_size, vk::VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
     let bind_memory = |buffer: vk::VkBuffer, flags| {
         let mut reqs = vk::VkMemoryRequirements::default();
@@ -491,6 +495,23 @@ fn main() {
     );
     let particle_mem = bind_memory(vk_particle_buffer, vk::VkMemoryPropertyFlagBits::VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     let grid_mem = bind_memory(vk_grid_buffer, vk::VkMemoryPropertyFlagBits::VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    let readback_mem = bind_memory(
+        vk_readback_buffer,
+        vk::VkMemoryPropertyFlagBits::VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk::VkMemoryPropertyFlagBits::VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+    );
+
+    let mut readback_ptr = std::ptr::null_mut();
+    unsafe {
+        vk_assert!(vk::vkMapMemory(
+            vk_device,
+            readback_mem,
+            0,
+            grid_size,
+            vk::VkMemoryMapFlagBits(0),
+            &mut readback_ptr
+        ));
+    }
 
     unsafe {
         let mut mapped_ptr = std::ptr::null_mut();
@@ -918,6 +939,9 @@ fn main() {
 
         defer! { unsafe { vk_assert!(vk::vkDeviceWaitIdle(vk_device)); } }
 
+        let mut frame_count = 0;
+        let mut readback_pending = false;
+
         // --- THE MAIN RENDER LOOP ---
         'render_loop: loop {
             if unsafe { vk::glfwWindowShouldClose(glfw_context.0) } == vk::GLFW_TRUE as i32 {
@@ -931,6 +955,17 @@ fn main() {
                 vk_assert!(vk::vkWaitForFences(vk_device, 1, &vk_fence, vk::VK_TRUE, u64::MAX));
                 vk_assert!(vk::vkResetFences(vk_device, 1, &vk_fence));
             }
+
+            if readback_pending {
+                let readback_grid = unsafe { std::slice::from_raw_parts(readback_ptr as *const u32, (GRID_WIDTH * GRID_HEIGHT) as usize) };
+                let total_particles: u32 = readback_grid.iter().sum();
+
+                println!("Frame {:04}: Total Particles = {}", frame_count, total_particles);
+                assert_eq!(total_particles, NUM_PARTICLES, "PARTICLE CONSERVATION FAILED!");
+
+                readback_pending = false;
+            }
+            frame_count += 1;
 
             let mut image_index: u32 = 0;
             let vk_result = unsafe {
@@ -1022,11 +1057,40 @@ fn main() {
                     std::ptr::null(),
                 );
 
-                // --- 2. COMPUTE: STEP PASS ---
                 vk::vkCmdBindPipeline(vk_command_buffer, vk::VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_COMPUTE, step_pipeline);
                 vk::vkCmdDispatch(vk_command_buffer, (NUM_PARTICLES + 255) / 256, 1, 1);
 
-                // Barrier: Step -> Fragment
+                if frame_count % 100 == 0 {
+                    let transfer_barrier = vk::VkBufferMemoryBarrier {
+                        sType: vk::VkStructureType::VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                        srcAccessMask: vk::VkAccessFlagBits::VK_ACCESS_SHADER_WRITE_BIT,
+                        dstAccessMask: vk::VkAccessFlagBits::VK_ACCESS_TRANSFER_READ_BIT,
+                        buffer: vk_grid_buffer,
+                        size: vk::VK_WHOLE_SIZE,
+                        ..Default::default()
+                    };
+                    vk::vkCmdPipelineBarrier(
+                        vk_command_buffer,
+                        vk::VkPipelineStageFlagBits::VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                        vk::VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        vk::VkDependencyFlagBits(0),
+                        0,
+                        std::ptr::null(),
+                        1,
+                        &transfer_barrier,
+                        0,
+                        std::ptr::null(),
+                    );
+
+                    let copy_region = vk::VkBufferCopy {
+                        srcOffset: 0,
+                        dstOffset: 0,
+                        size: grid_size,
+                    };
+                    vk::vkCmdCopyBuffer(vk_command_buffer, vk_grid_buffer, vk_readback_buffer, 1, &copy_region);
+                    readback_pending = true;
+                }
+
                 let barrier2 = vk::VkBufferMemoryBarrier {
                     sType: vk::VkStructureType::VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
                     srcAccessMask: vk::VkAccessFlagBits::VK_ACCESS_SHADER_WRITE_BIT,
@@ -1036,7 +1100,6 @@ fn main() {
                     ..Default::default()
                 };
 
-                // Image Barrier: UNDEFINED -> COLOR_ATTACHMENT_OPTIMAL
                 let image_to_render_barrier = vk::VkImageMemoryBarrier {
                     sType: vk::VkStructureType::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                     oldLayout: vk::VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED,
@@ -1068,7 +1131,6 @@ fn main() {
                     &image_to_render_barrier,
                 );
 
-                // --- 3. GRAPHICS PASS ---
                 let color_attachment = vk::VkRenderingAttachmentInfoKHR {
                     sType: vk::VkStructureType::VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
                     imageView: vk_swapchain_image_views[image_index as usize],
@@ -1113,7 +1175,6 @@ fn main() {
                     std::ptr::null(),
                 );
 
-                // Standard Pipeline Dynamic State
                 let viewport = vk::VkViewport {
                     width: vk_swapchain_extent.width as f32,
                     height: vk_swapchain_extent.height as f32,
@@ -1131,7 +1192,6 @@ fn main() {
 
                 (ext_fns.vkCmdEndRenderingKHR)(vk_command_buffer);
 
-                // Image Barrier: COLOR_ATTACHMENT_OPTIMAL -> PRESENT_SRC_KHR
                 let image_to_present_barrier = vk::VkImageMemoryBarrier {
                     sType: vk::VkStructureType::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                     oldLayout: vk::VkImageLayout::VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
