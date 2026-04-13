@@ -8,9 +8,7 @@ use nix;
 use vk;
 
 use my_shaders::{Particle, PushConstants, Xorshift32};
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd};
 
-// --- SIMULATION PARAMETERS ---
 const GRID_WIDTH: u32 = 1280;
 const GRID_HEIGHT: u32 = 720;
 const NUM_PARTICLES: u32 = 800_000;
@@ -18,8 +16,6 @@ const _: () = const {
     assert!(NUM_PARTICLES < GRID_WIDTH * GRID_HEIGHT);
 };
 const MAX_DENSITY: u32 = 2;
-
-// --- CORE SKELETON MACROS & TRAITS ---
 
 struct Defer<T: FnMut()> {
     func: T,
@@ -82,8 +78,6 @@ macro_rules! vk_assert {
         assert_eq!($e, vk::VkResult::VK_SUCCESS)
     };
 }
-
-// --- VULKAN CONTEXT SETUP ---
 
 unsafe extern "C" fn my_glfw_error_callback(error: i32, description: *const std::ffi::c_char) {
     panic!("GLFW Error {}: {}", error, unsafe {
@@ -266,7 +260,6 @@ fn find_memory_type_index(vk_physical_device: vk::VkPhysicalDevice, memory_type_
     panic!("Failed to find suitable memory type.");
 }
 
-// Just load the dynamic rendering commands now
 struct DynamicRenderingFns {
     vkCmdBeginRenderingKHR: unsafe extern "system" fn(vk::VkCommandBuffer, *const vk::VkRenderingInfoKHR),
     vkCmdEndRenderingKHR: unsafe extern "system" fn(vk::VkCommandBuffer),
@@ -282,8 +275,6 @@ impl DynamicRenderingFns {
         }
     }
 }
-
-// --- MAIN APPLICATION ---
 
 macro_rules! include_spirv {
     ($path:expr) => {{
@@ -442,7 +433,6 @@ fn main() {
         ));
     }
 
-    // --- BUFFER CREATION (PARTICLES & GRID) ---
     let particles_size = (NUM_PARTICLES as usize * std::mem::size_of::<Particle>()) as u64;
     let grid_size = (GRID_WIDTH as usize * GRID_HEIGHT as usize * std::mem::size_of::<u32>()) as u64;
 
@@ -577,7 +567,6 @@ fn main() {
         vk::vkQueueWaitIdle(vk_queue);
     }
 
-    // --- DESCRIPTOR SETS ---
     let layout_bindings = [
         vk::VkDescriptorSetLayoutBinding {
             binding: 0,
@@ -701,9 +690,6 @@ fn main() {
     let shader_module = vk_create!(vk::vkCreateShaderModule, vk_device, &shader_module_info, std::ptr::null());
     defer! { unsafe { vk::vkDestroyShaderModule(vk_device, shader_module, std::ptr::null()); } }
 
-    // --- PIPELINE CREATION ---
-
-    // 1. Clean Compute Pipeline
     let clean_stage = vk::VkPipelineShaderStageCreateInfo {
         sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         stage: vk::VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT,
@@ -730,7 +716,6 @@ fn main() {
     }
     defer! { unsafe { vk::vkDestroyPipeline(vk_device, clean_pipeline, std::ptr::null()); } }
 
-    // 2. Step Compute Pipeline
     let step_stage = vk::VkPipelineShaderStageCreateInfo {
         sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         stage: vk::VkShaderStageFlagBits::VK_SHADER_STAGE_COMPUTE_BIT,
@@ -757,7 +742,6 @@ fn main() {
     }
     defer! { unsafe { vk::vkDestroyPipeline(vk_device, step_pipeline, std::ptr::null()); } }
 
-    // 3. Graphics Pipeline
     let graphics_stages = [
         vk::VkPipelineShaderStageCreateInfo {
             sType: vk::VkStructureType::VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -942,7 +926,6 @@ fn main() {
         let mut frame_count = 0;
         let mut readback_pending = false;
 
-        // --- THE MAIN RENDER LOOP ---
         'render_loop: loop {
             if unsafe { vk::glfwWindowShouldClose(glfw_context.0) } == vk::GLFW_TRUE as i32 {
                 break 'swapchain_loop;
@@ -1010,7 +993,6 @@ fn main() {
                     &push as *const _ as *const _,
                 );
 
-                // --- 1. COMPUTE: CLEAN PASS ---
                 vk::vkCmdBindPipeline(vk_command_buffer, vk::VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_COMPUTE, clean_pipeline);
                 vk::vkCmdBindDescriptorSets(
                     vk_command_buffer,
@@ -1024,7 +1006,6 @@ fn main() {
                 );
                 vk::vkCmdDispatch(vk_command_buffer, ((GRID_WIDTH * GRID_HEIGHT) + 255) / 256, 1, 1);
 
-                // Barrier: Clean -> Step
                 let barrier1 = vk::VkBufferMemoryBarrier {
                     sType: vk::VkStructureType::VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
                     srcAccessMask: vk::VkAccessFlagBits::VK_ACCESS_SHADER_WRITE_BIT,
