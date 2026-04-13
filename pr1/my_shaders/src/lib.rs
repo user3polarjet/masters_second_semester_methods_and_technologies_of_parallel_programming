@@ -37,7 +37,6 @@ pub struct PushConstants {
     pub max_density: u32,
 }
 
-// --- COMPUTE 1: CLEAN PASS ---
 #[spirv(compute(threads(256)))]
 pub fn clean_buffer(
     #[spirv(global_invocation_id)] id: UVec3,
