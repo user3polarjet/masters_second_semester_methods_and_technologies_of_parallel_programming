@@ -1,0 +1,59 @@
+Methodological instructions for the implementation of educational projects from the course
+"Methods and technologies of parallel programming"
+Educational project No. 2. "Creating a distributed-parallel chat system"
+
+Project goal
+• To master the principles of building distributed client-server messaging systems.
+• To learn to use parallel programming tools to simultaneously serve many clients.
+• To investigate the problems of synchronization, competitive access to shared resources and network interaction.
+• To develop practical skills in designing reliable real-time messaging services.
+• To analyze the performance, scalability and fault tolerance of the proposed solution.
+
+Description of the applied problem.
+
+It is necessary to develop a chat system with a client-server architecture, in which the server simultaneously serves multiple clients, receives, routes, stores and transmits messages between participants. The system must support real-time data exchange, work correctly with many simultaneous connections, ensure message integrity, and provide a minimum set of user and group management tools.
+The project must be implemented in a general form without being strictly tied to a specific programming language. Any framework or development methodology can be used.
+
+General requirements
+
+• The project architecture must contain at least a server module and one or more client modules.
+• The server must provide concurrent customer service without blocking the entire system with one slow connection.
+• Shared server data structures (list of active users, groups, message queues, event log, offline message repository) must be processed correctly under parallel access conditions.
+
+Example of project implementation:
+
+1) A server is started, which opens a network port and waits for client connections.
+2) Users connect to the server and register under unique names.
+3) Each new connection is handled by a separate thread, task, or asynchronous handler.
+4) Clients deliver text, file, or multimedia messages to a single user, group, or all participants.
+5) The server determines the recipients, performs routing, logs the event, and monitors delivery status.
+6) If the recipient is temporarily unavailable, the server stores the message for later delivery.
+7) If the connection is lost, the server marks the client as inactive and updates the list of participants.
+8) After reconnecting, the user receives unread or undelivered messages.
+
+Implementation Comment:
+
+Students may propose their own implementation of the project, methods, or program elements or task if they better demonstrate the problems with using multithreading, or if these innovations solve the simulation problem better. All proposals and deviations from the requirements must be described and justified.
+
+Mandatory requirements:
+• A working server and at least one client.
+• Demonstration of simultaneous operation of several clients.
+• Support for individual messages and communication in groups.
+• Maintaining a list of participants and fixing disconnected users.
+
+Project implementation options and requirements:
+
+To simplify the protection process, you can implement only part of the project, or the entire project in order to get the maximum score. A partial solution does not provide for visualization and a two-dimensional crystal. A full-fledged solution must include one of the solutions to complex problems.
+1) Full-fledged project (15 points):
+• implement a distributed client-server chat system to work at least within a local network (not necessarily, but testing within any network is required to fully demonstrate message transmission) or between several nodes;
+• reasonably choose and describe a model for parallel processing of connections;
+• support all required features: text messages, formatting, files, multimedia, private messages, groups, member list, disconnection detection, offline messages or sending messages to offline members.
+
+2) Partial project implementation (10 points):
+• implement a server and client for simultaneous work of several users;
+• support text messages, private messages, broadcast, member list and basic groups;
+• implement at least one of the additional mechanisms: file transfer, multimedia messages or offline delivery conduct a basic analysis of the results:
+
+3) Minimum project (5 points):
+
+Implement a local chat program with a server and several clients on one computer; support user registration, text message exchange; show the basic use of sockets or other network interface and concurrent connection maintenance; to demonstrate the work, it is enough to develop a console application.
