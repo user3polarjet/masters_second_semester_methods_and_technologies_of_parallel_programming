@@ -7,6 +7,7 @@ fn main() {
     let result = SpirvBuilder::new("../my_shaders", "spirv-unknown-vulkan1.3")
         .capability(spirv_builder::Capability::SampledBuffer)
         .capability(spirv_builder::Capability::ImageBuffer)
+        .capability(spirv_builder::Capability::VulkanMemoryModelDeviceScope)
         .build()
         .expect("Failed to build shader");
 

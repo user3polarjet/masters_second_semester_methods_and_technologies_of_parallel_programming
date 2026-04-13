@@ -4,23 +4,19 @@ use spirv_std::glam::{UVec3, Vec2, Vec4};
 use spirv_std::spirv;
 
 #[derive(Clone, Copy)]
-pub struct Xoroshiro128PP {
-    pub s0: u64,
-    pub s1: u64,
+pub struct Xorshift32 {
+    pub state: u32,
 }
 
-impl Xoroshiro128PP {
-    fn rotl(x: u64, k: u32) -> u64 {
-        (x << k) | (x >> (64 - k))
-    }
-    pub fn next(&mut self) -> u64 {
-        let s0 = self.s0;
-        let mut s1 = self.s1;
-        let result = Self::rotl(s0.wrapping_add(s1), 17).wrapping_add(s0);
-        s1 ^= s0;
-        self.s0 = Self::rotl(s0, 49) ^ s1 ^ (s1 << 21);
-        self.s1 = Self::rotl(s1, 28);
-        result
+impl Xorshift32 {
+    pub fn next(&mut self) -> u32 {
+        let mut x = self.state;
+        // Xorshift32 algorithm: extremely fast on GPU ALUs
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.state = x;
+        x
     }
 }
 
@@ -28,7 +24,7 @@ impl Xoroshiro128PP {
 pub struct Particle {
     pub pos_x: u32,
     pub pos_y: u32,
-    pub rng: Xoroshiro128PP,
+    pub rng: Xorshift32, // Now only 4 bytes instead of 16 bytes!
 }
 
 #[repr(C)]
