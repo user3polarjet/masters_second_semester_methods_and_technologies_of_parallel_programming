@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "glfw-sys",
+    "linux",
+    "my",
+    "my_shaders",
+    "vk",
+]
+resolver = "2"
+default-run = "my"

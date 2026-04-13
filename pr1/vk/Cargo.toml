@@ -1,0 +1,13 @@
+[package]
+name = "vk"
+version = "0.1.0"
+edition = "2024"
+links = "vulkan"
+
+[build-dependencies]
+bindgen = "0.72.1"
+cc = "1.2.57"
+regex = "1.12.3"
+
+[dependencies]
+glfw-sys = {path="../glfw-sys"}

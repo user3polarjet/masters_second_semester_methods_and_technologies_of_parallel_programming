@@ -1,0 +1,11 @@
+[package]
+name = "my_shaders"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+spirv-std = { git = "https://github.com/Rust-GPU/rust-gpu", rev="30896871ba00e668029ccb724f1438202b284708"}
+paste = "1.0"

@@ -1,0 +1,10 @@
+[package]
+name = "linux"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+bindgen = "0.72.1"
+
+[dependencies]
+nix = {version="0.31.2", features = ["ioctl"]}
