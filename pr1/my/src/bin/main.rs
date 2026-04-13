@@ -11,9 +11,12 @@ use my_shaders::{Particle, PushConstants, Xorshift32};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd};
 
 // --- SIMULATION PARAMETERS ---
-const GRID_WIDTH: u32 = 640;
-const GRID_HEIGHT: u32 = 480;
-const NUM_PARTICLES: u32 = 100_000;
+const GRID_WIDTH: u32 = 1280;
+const GRID_HEIGHT: u32 = 720;
+const NUM_PARTICLES: u32 = 800_000;
+const _: () = const {
+    assert!(NUM_PARTICLES < GRID_WIDTH * GRID_HEIGHT);
+};
 const MAX_DENSITY: u32 = 2;
 
 // --- CORE SKELETON MACROS & TRAITS ---
